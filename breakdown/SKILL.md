@@ -73,7 +73,7 @@ Save the plan to `.plans/` in the current working directory.
 
 Use the format: `YYYYMMDD-HHMMSS-<slug>.md`
 
-- Timestamp comes from the current date and time
+- Generate the timestamp by running: `date +%Y%m%d-%H%M%S`
 - `<slug>` is a short kebab-case description derived from the objective (3–5 words max)
 - Example: `20260303-143022-add-auth-flow.md`
 
