@@ -51,33 +51,17 @@ Also identify the **trunk branch** the run will build on (e.g. `main`) and confi
 
 ### Permissions pre-flight
 
-The run only stays autonomous if the harness will not raise permission prompts: subagents inherit this session's permission settings, and the skill's own frontmatter does not propagate to them. Before closing the interview, verify the session can run unattended:
+The run only stays autonomous if the harness will not raise permission prompts: subagents inherit this session's permission mode, and the skill's own frontmatter does not propagate to them. A single foreground prompt mid-run breaks autonomy, and an auto-denied call makes an agent fail confusingly instead.
 
-- Check `.claude/settings.json` (and `settings.local.json`) for `permissions.allow` rules covering what the agents will do: `Edit`, `Write`, and Bash patterns for git (`status`, `diff`, `add`, `commit`, `merge`, `branch`, `worktree`), plus this project's build and test commands.
-- If coverage is missing, resolve it as part of the interview — ask the user to approve adding the missing allow rules to `.claude/settings.local.json`. Note that `acceptEdits` mode alone is not enough: it auto-approves file edits and basic filesystem commands, but git, build, and test commands still prompt unless explicitly allowed. Example rules:
+**This requires `bypassPermissions` mode — an allow-list is not sufficient.** The subagents are themselves models that decide commands at runtime (dependency installs, build and test variants, git invocations with assorted flags, `find`, `sed`, and so on), so the command set is open-ended and no static `permissions.allow` list can anticipate it. Beyond that, the harness matches Bash rules as prefix globs against the literal command string, so even listed commands slip through when they contain `$(…)` substitutions, lead with flags like `git --git-dir=…`, or are compound (`cd foo && …`). A leaked prompt is therefore a question of *when*, not *whether* — which is why the fix is the session mode, not the rules.
 
-  ```json
-  {
-    "permissions": {
-      "allow": [
-        "Edit",
-        "Write",
-        "Bash(git status *)",
-        "Bash(git diff *)",
-        "Bash(git add *)",
-        "Bash(git commit *)",
-        "Bash(git merge *)",
-        "Bash(git branch *)",
-        "Bash(git worktree *)",
-        "Bash(npm test *)",
-        "Bash(npm run *)"
-      ]
-    }
-  }
-  ```
+The skill cannot flip the mode itself, so confirm it during the interview before the closing confirmation: the session must be in `bypassPermissions` mode for the run. Enable it one of three ways:
 
-  Adjust the build/test entries to the project's actual toolchain.
-- Do not start the run with known gaps: a foreground permission prompt mid-run breaks autonomy, and an auto-denied call makes an agent fail confusingly instead.
+- **In-session toggle** — press Shift+Tab to cycle the permission mode until the footer shows "bypass permissions". Easiest; do it right before the run.
+- **Launch flag** — start the CLI with `claude --dangerously-skip-permissions`.
+- **Settings** — `"permissions": { "defaultMode": "bypassPermissions" }` in `.claude/settings.local.json`, for a repo where runs are always unattended.
+
+Make the tradeoff explicit to the user: bypass mode disables the approval gate for the *whole* session, not just orchestrify's commands. That is the point — the run is designed to be unattended — but any other work in the same session loses the gate too, so a dedicated session for the run is the clean choice. If the user will not enable bypass mode, do not start: the run cannot be autonomous, and an allow-list will only let it pause partway.
 
 ## Step 2: Write the spec and work breakdown
 
