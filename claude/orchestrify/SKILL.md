@@ -1,6 +1,6 @@
 ---
 name: orchestrify
-description: Drive a feature from idea to committed code using dedicated subagents per stage. Use when Claude should interview the user for the desired outcome, then run fully autonomously, write a spec with a dependency-ordered work breakdown, and for each unblocked work item spawn agents to plan, implement, review and fix, and commit in an isolated git worktree, with a merge agent integrating completed items. After the interview nothing asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
+description: Drive a feature from idea to committed code using dedicated subagents per stage. Use when Claude should interview the user for the desired outcome, then run fully autonomously, write a spec with a dependency-ordered work breakdown, and for each unblocked work item spawn agents to plan, implement, review and fix, and commit in its own git worktree branched off a shared bare repository, with a merge agent integrating completed items into an integration worktree. Requires a bare-repo-with-worktrees layout (validated up front); there is no privileged main checkout, and the run's deliverable is a branch the user lands themselves. After the interview nothing asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
 args: <idea>
 user-invocable: true
 ---
@@ -9,7 +9,7 @@ user-invocable: true
 
 Coordinate a full implementation through isolated subagents. The main conversation acts as the orchestrator: it owns the spec, the work state, and all user interaction. All heavy context — codebase exploration, diffs, test output — lives and dies inside subagents. The orchestrator only reads artifact files and agent summaries.
 
-Isolation is double: each subagent has its own context window, and each work item has its own git worktree. Parallel items can never corrupt each other's files — overlap surfaces as an explicit merge conflict, resolved by a dedicated merge agent with both items' plans in hand.
+Isolation is double: each subagent has its own context window, and each work item has its own git worktree. The repository is a bare repo, and every working copy — the user's, the run's integration tree, and each item — is a peer worktree off that one shared object store. There is no privileged main checkout: the orchestrator never reads or writes the user's worktree, and the run's deliverable is a branch the user lands themselves. Parallel items can never corrupt each other's files — overlap surfaces as an explicit merge conflict, resolved by a dedicated merge agent with both items' plans in hand.
 
 The initial interview is the ONLY interactive moment of the entire run. After it ends, never ask the user anything — no approval gates, no mid-run clarifications, no AskUserQuestion. Status updates are one-way reports. Anything the orchestrator cannot decide within the interview's stated intent becomes a `blocked` item surfaced in the final report.
 
@@ -30,6 +30,23 @@ Interview the user before writing anything. This is the only chance to capture i
 - The doubt rule: when the run hits an ambiguity, should it prefer the smaller interpretation and cut scope, or the more complete one? Default to smaller if the user has no preference.
 
 Close the interview by restating the understood outcome, features, non-goals, and doubt rule, and confirming them. That confirmation is the approval for the entire run — there is no later gate. From this point on, never ask the user anything; proceed on recorded assumptions.
+
+### Bare-repository pre-flight
+
+Orchestrify requires the project to be a bare repository with worktrees — no privileged main checkout. That layout is the substrate the entire run depends on, so validate it during the interview, before the closing confirmation. This is a pre-flight gate, not a mid-run question.
+
+Resolve the shared git directory and confirm it is bare:
+
+```bash
+git --git-dir="$(git rev-parse --path-format=absolute --git-common-dir)" rev-parse --is-bare-repository
+```
+
+This works whether the orchestrator is invoked from inside a worktree or at the bare repo itself — it always checks the *shared* repository, not the current working tree.
+
+- `true` → proceed.
+- `false` → the repo is a conventional checkout. Do not run. Tell the user orchestrify now requires a bare-central layout and stop. The one-time conversion is roughly: move the existing `.git` into a `.bare/` directory, add a top-level `.git` file containing `gitdir: ./.bare`, run `git --git-dir=.bare config core.bare true`, then recreate working copies as worktrees (`git --git-dir=.bare worktree add <branch>`). Converting the user's repo is their decision — surface the steps, do not do it autonomously.
+
+Also identify the **trunk branch** the run will build on (e.g. `main`) and confirm it exists; the integration branch is created from its tip.
 
 ### Permissions pre-flight
 
@@ -63,18 +80,24 @@ The run only stays autonomous if the harness will not raise permission prompts: 
 
 ## Step 2: Write the spec and work breakdown
 
-Create the run directory and spec:
+Create the run directory at the project root — the directory that holds the bare repo and its worktrees. It holds only run metadata. Every worktree lives at the **top level of the repo**, as a sibling of the bare repo and the user's own worktrees — never inside `.orchestrify/`:
 
 ```text
-.orchestrify/YYYYMMDD-HHMMSS-<slug>/
-├── spec.md      # requirements, interfaces, work breakdown
-├── state.md     # live work-item status, owned by the orchestrator
-├── plans/       # one plan file per work item, written by plan agents
-└── worktrees/   # one git worktree per in-flight work item
+<repo-root>/
+├── .bare/                              # the bare repository (shared object store)
+├── <user worktrees…>                   # e.g. main/ — untouched by the run
+├── orchestrify-<slug>/                 # integration worktree (branch orchestrify/<slug>)
+├── orchestrify-<slug>-<ID>/            # one worktree per in-flight item (e.g. orchestrify-<slug>-W1)
+└── .orchestrify/YYYYMMDD-HHMMSS-<slug>/
+    ├── spec.md     # requirements, interfaces, work breakdown
+    ├── state.md    # live work-item status, owned by the orchestrator
+    └── plans/      # one plan file per work item, written by plan agents
 ```
 
+- `<repo-root>` is the directory containing the bare repo — resolve it as the parent of `git rev-parse --path-format=absolute --git-common-dir`.
 - Generate the timestamp by running `date +%Y%m%d-%H%M%S`.
 - Make `<slug>` a short kebab-case description of the idea, 3-5 words max.
+- Worktree directories sit at `<repo-root>` and are named after their branches: `orchestrify-<slug>` for integration, `orchestrify-<slug>-<ID>` for each item. The `.orchestrify/` metadata is scratch space on disk, outside every worktree, so nothing in it can be committed by accident.
 
 Do light codebase reconnaissance first — enough to split the work along real module boundaries, not enough to design implementations.
 
@@ -155,25 +178,31 @@ Statuses: `pending` → `planning` → `planned` → `implementing` → `reviewi
 
 Report the spec to the user as a one-way status update — outcome, work items, dependency order, what will run in parallel, key assumptions — and proceed immediately. Do not wait for or request approval; the interview's closing confirmation already authorized the run. If the user interjects on their own, incorporate it; never solicit it.
 
-Set the spec status to `approved`. If not already on a feature branch, create one.
+Set the spec status to `approved`. Create the integration worktree at the repo root, on a fresh branch based on the trunk tip:
+
+```bash
+git worktree add <repo-root>/orchestrify-<slug> -b orchestrify/<slug> <trunk-branch>
+```
+
+Completed items are merged into this branch, and `orchestrify/<slug>` is the run's deliverable — the user lands it onto trunk themselves at the end. The orchestrator never checks out or writes the user's own worktree.
 
 The spec must also record the **doubt rule** from the interview — every later autonomous decision cites it.
 
 ## Step 4: Run the work loop
 
-Each work item gets its own git worktree and branch, so independent items run fully in parallel — even when they touch overlapping files. Collisions cannot corrupt anyone's work; they surface later as explicit merge conflicts, which the merge agent resolves.
+Each work item gets its own git worktree and branch off the shared bare repo, so independent items run fully in parallel — even when they touch overlapping files. As many worktrees as there are unblocked items can be live at once; create one per item and let them run concurrently. Collisions cannot corrupt anyone's work; they surface later as explicit merge conflicts, which the merge agent resolves.
 
 Repeat until every item is `merged` or `blocked`:
 
 1. Collect items whose dependencies are all `merged`.
 2. Spawn plan agents for all of them **in parallel** (planning is read-only and safe to parallelize).
-3. As each plan completes, create the item's worktree from the current feature branch tip:
+3. As each plan completes, create the item's worktree at the repo root, branched off the integration branch tip:
 
    ```bash
-   git worktree add <run-dir>/worktrees/<ID> -b orchestrify/<slug>/<ID>
+   git worktree add <repo-root>/orchestrify-<slug>-<ID> -b orchestrify/<slug>/<ID> orchestrify/<slug>
    ```
 
-   Branching only after dependencies are merged guarantees each item builds on its dependencies' actual code.
+   Branching off the integration branch only after dependencies are merged guarantees each item builds on its dependencies' actual code.
 4. Run implement → review → commit for each item **inside its worktree**, in parallel across items. All three agents for one item share that one persistent worktree — each agent gets a fresh context, but they must see the same files, so pass the worktree path explicitly in every prompt.
 5. As items reach `committed`, run the merge agent — merges are **serialized**, in dependency order, completion order for siblings.
 6. Update `state.md` after every transition. A merge may unblock dependents — re-run step 1.
@@ -237,8 +266,8 @@ If the agent reports a spec conflict or infeasibility, go to **Escalation**.
 You are implementing ONE work item from a plan. You cannot ask the user
 questions.
 
-Work EXCLUSIVELY inside this worktree: <run-dir>/worktrees/<ID>. All
-reads, edits, and commands run there — never touch the main checkout.
+Work EXCLUSIVELY inside this worktree: <repo-root>/orchestrify-<slug>-<ID>. All
+reads, edits, and commands run there — never touch another worktree.
 If the build needs dependencies installed in the worktree, install them
 first.
 
@@ -280,7 +309,7 @@ The reviewer deliberately gets a fresh context — it must not inherit the imple
 You are reviewing the uncommitted changes for ONE work item of a larger
 feature. You did not write this code; read it cold, like a PR review.
 
-Work EXCLUSIVELY inside this worktree: <run-dir>/worktrees/<ID>.
+Work EXCLUSIVELY inside this worktree: <repo-root>/orchestrify-<slug>-<ID>.
 
 Context: <run-dir>/spec.md (the Interfaces section is a hard contract)
 and <run-dir>/plans/<ID>.md (intent, plus Deviations the implementer
@@ -310,7 +339,7 @@ If the reviewer reports unfixable Critical or High findings, spawn a fresh imple
 
 ```text
 Create one git commit for completed work item <ID> — <title>, on its
-item branch inside this worktree: <run-dir>/worktrees/<ID>. Run all
+item branch inside this worktree: <repo-root>/orchestrify-<slug>-<ID>. Run all
 git commands there.
 
 Inspect with `git status` and `git diff`. Stage only files belonging to
@@ -343,8 +372,9 @@ Record the hash in `state.md` and mark the item `committed`.
 Run merges one at a time, in dependency order — completion order for siblings. Merging is where deferred collisions become visible, and where they get resolved with full context.
 
 ```text
-Merge completed work item <ID> — <title> into the feature branch
-<feature-branch>. Work in the main checkout.
+Merge completed work item <ID> — <title> into the integration branch
+orchestrify/<slug>. Work EXCLUSIVELY in the integration worktree:
+<repo-root>/orchestrify-<slug>. Never touch the user's worktrees.
 
 Run: git merge --no-ff orchestrify/<slug>/<ID>
 
@@ -372,7 +402,7 @@ resolved, verification result, and any fix you applied.
 ```
 
 After a successful merge, remove the worktree and branch
-(`git worktree remove <run-dir>/worktrees/<ID>` and
+(`git worktree remove <repo-root>/orchestrify-<slug>-<ID>` and
 `git branch -d orchestrify/<slug>/<ID>`), mark the item `merged` in
 `state.md`, and re-check for newly unblocked items.
 
@@ -401,9 +431,10 @@ When the doubt rule is prefer-smaller-scope and a feature can be cleanly cut rat
 Per-item review catches local bugs; only this phase catches pieces that do not compose. After the loop drains, spawn a final agent:
 
 ```text
-Verify an assembled multi-part implementation. Read
-<run-dir>/spec.md, then: run the full build, the full test suite, and
-exercise each spec feature end to end the way a user would.
+Verify an assembled multi-part implementation. Work in the integration
+worktree: <repo-root>/orchestrify-<slug>. Read <run-dir>/spec.md, then:
+run the full build, the full test suite, and exercise each spec feature
+end to end the way a user would.
 
 Judge against the spec's Outcome and Features sections — not against
 the individual plans. Look especially at the seams: do the work items
@@ -426,14 +457,15 @@ Tell the user:
 - Deviations from the original spec and why.
 - Anything `blocked` and the decision it is waiting on.
 - The integration verification result, feature by feature.
-- Suggested next step (merge, push, or follow-up run for blocked items).
+- Suggested next step: the deliverable is the `orchestrify/<slug>` branch (built in the integration worktree). The user lands it onto trunk from their own worktree — `git merge --no-ff orchestrify/<slug>` — then optionally pushes. Plus any follow-up run for blocked items.
 
 ## Guidelines
 
+- Never attribute commits to Claude. No commit produced by any agent in the run — commit agent, merge agent, escalation fixes — may mention Claude, AI, agents, this orchestration process, or the user anywhere in the message: not the subject, not the body, not the footers. No `Co-Authored-By: Claude` and no `Generated with` trailers. Commit messages describe only the change itself.
 - The orchestrator never implements, reviews, or explores deeply itself. If you catch yourself reading source files at length in the main context, delegate.
 - State lives in files, not in conversation memory. After any interruption, `state.md` plus the plan files are sufficient to resume.
 - Pass context between stages through artifact files, never by relaying summaries — the implement agent reads the plan file itself, the reviewer reads the plan and diff itself.
-- One worktree per work item, created by the orchestrator, shared by that item's implement/review/commit agents, removed only after merge. Agents in worktrees never touch the main checkout; only the serialized merge agent writes to the feature branch.
+- One worktree per work item, created by the orchestrator at the repo root off the shared bare repo, shared by that item's implement/review/commit agents, removed only after merge. All worktrees — the user's, the integration tree, and each item — are peers off the bare repo; the run never reads or writes the user's worktree. Only the serialized merge agent writes the integration branch, inside the integration worktree.
 - If a run is abandoned, clean up with `git worktree list` and remove any `orchestrify/` worktrees and branches left behind.
 - After the interview closes, the run never waits on the user: no approval requests, no clarifying questions, no AskUserQuestion. Ambiguity resolves against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report.
 - Keep the user informed at phase transitions with one or two one-way status lines: items started, items merged, amendments made, anything blocked. Inform, never ask.
