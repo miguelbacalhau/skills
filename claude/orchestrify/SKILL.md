@@ -188,8 +188,10 @@ Repeat until every item is `merged` or `blocked`:
 4. Create each item's worktree at the repo root, branched off the integration branch tip:
 
    ```bash
-   git worktree add <repo-root>/orchestrify-<slug>-<ID> -b orchestrify/<slug>/<ID> orchestrify/<slug>
+   git worktree add <repo-root>/orchestrify-<slug>-<ID> -b orchestrify/<slug>-<ID> orchestrify/<slug>
    ```
+
+   The item branch is `orchestrify/<slug>-<ID>`, not `orchestrify/<slug>/<ID>`: git stores refs as files, so a branch `orchestrify/<slug>` and a branch `orchestrify/<slug>/<ID>` cannot coexist — the first occupies the path the second would need as a directory, and the worktree add fails with `cannot lock ref … exists; cannot create`. Keeping `<slug>-<ID>` as a single leaf segment sidesteps the directory/file conflict.
 
    Branching off the integration branch only after dependencies are merged guarantees each item builds on its dependencies' actual code.
 5. Run implement → review → commit for each item **inside its worktree**, in parallel across items. All three agents for one item share that one persistent worktree — each agent gets a fresh context, but they must see the same files, so pass the worktree path explicitly in every prompt.
@@ -375,7 +377,7 @@ Merge completed work item <ID> — <title> into the integration branch
 orchestrify/<slug>. Work EXCLUSIVELY in the integration worktree:
 <repo-root>/orchestrify-<slug>. Never touch the user's worktrees.
 
-Run: git merge --no-ff orchestrify/<slug>/<ID>
+Run: git merge --no-ff orchestrify/<slug>-<ID>
 
 If there are conflicts, resolve them yourself. Your sources of truth,
 in order: the Interfaces section of <run-dir>/spec.md, then the plan
@@ -402,7 +404,7 @@ resolved, verification result, and any fix you applied.
 
 After a successful merge, remove the worktree and branch
 (`git worktree remove <repo-root>/orchestrify-<slug>-<ID>` and
-`git branch -d orchestrify/<slug>/<ID>`), mark the item `merged` in
+`git branch -d orchestrify/<slug>-<ID>`), mark the item `merged` in
 `state.md`, and re-check for newly unblocked items.
 
 If the merge agent aborts on a semantic conflict, go to **Escalation** — two work items that cannot coexist mean the spec's interfaces or the breakdown need revision, which is a user decision.
