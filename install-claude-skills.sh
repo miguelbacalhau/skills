@@ -7,11 +7,16 @@ Usage: ./install-claude-skills.sh [options]
 
 Symlink all skills from ./claude into the Claude skills directory.
 
+A skill may bundle subagent definitions in an `agents/` subdirectory
+(e.g. claude/orchestrify/agents/*.md). Those files are also symlinked
+into the Claude agents directory so the harness can load them.
+
 Options:
-  --target DIR   Install links into DIR instead of $HOME/.claude/skills
-  --force        Replace existing targets that are not the desired symlink
-  --dry-run      Print actions without changing the filesystem
-  -h, --help     Show this help
+  --target DIR          Install skill links into DIR instead of $HOME/.claude/skills
+  --agents-target DIR   Install agent links into DIR instead of $HOME/.claude/agents
+  --force               Replace existing targets that are not the desired symlink
+  --dry-run             Print actions without changing the filesystem
+  -h, --help            Show this help
 EOF
 }
 
@@ -27,6 +32,7 @@ fi
 
 source_dir="$repo_root/claude"
 target_dir="$HOME/.claude/skills"
+agents_target_dir="$HOME/.claude/agents"
 force=false
 dry_run=false
 
@@ -38,6 +44,14 @@ while [[ $# -gt 0 ]]; do
         exit 2
       fi
       target_dir="$2"
+      shift 2
+      ;;
+    --agents-target)
+      if [[ $# -lt 2 ]]; then
+        echo "error: --agents-target requires a directory" >&2
+        exit 2
+      fi
+      agents_target_dir="$2"
       shift 2
       ;;
     --force)
@@ -121,3 +135,40 @@ for skill_dir in "${skill_dirs[@]}"; do
     echo "linked: $link_path -> $skill_dir"
   fi
 done
+
+# Link any bundled subagent definitions (claude/<skill>/agents/*.md) into the
+# Claude agents directory. Runs as its own pass so skills that were already
+# linked above still get their agents installed.
+agent_files=("$source_dir"/*/agents/*.md)
+
+if [[ ${#agent_files[@]} -gt 0 ]]; then
+  run mkdir -p "$agents_target_dir"
+
+  for agent_file in "${agent_files[@]}"; do
+    [[ -f "$agent_file" ]] || continue
+
+    agent_name="$(basename "$agent_file")"
+    agent_link="$agents_target_dir/$agent_name"
+
+    if same_link_target "$agent_link" "$agent_file"; then
+      echo "ok: agent $agent_name already linked"
+      continue
+    fi
+
+    if [[ -e "$agent_link" || -L "$agent_link" ]]; then
+      if [[ "$force" != true ]]; then
+        echo "skip: $agent_link already exists; rerun with --force to replace it" >&2
+        continue
+      fi
+
+      run rm -rf "$agent_link"
+    fi
+
+    run ln -s "$agent_file" "$agent_link"
+    if [[ "$dry_run" == true ]]; then
+      echo "would link agent: $agent_link -> $agent_file"
+    else
+      echo "linked agent: $agent_link -> $agent_file"
+    fi
+  done
+fi

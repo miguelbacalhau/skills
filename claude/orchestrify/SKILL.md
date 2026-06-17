@@ -32,22 +32,29 @@ Interview the user before writing anything. This is the only chance to capture i
 
 Close the interview by restating the understood outcome, features, non-goals, doubt rule, and breakdown-checkpoint choice, and confirming them. That confirmation authorizes the run. If the user opted into the breakdown checkpoint, the only remaining interaction is that one approval in Step 3; otherwise there is no later gate at all. From this point on, never ask the user anything else; proceed on recorded assumptions.
 
-### Bare-repository pre-flight
+### Environment pre-flight (script)
 
-Orchestrify requires the project to be a bare repository with worktrees — no privileged main checkout. That layout is the substrate the entire run depends on, so validate it during the interview, before the closing confirmation. This is a pre-flight gate, not a mid-run question.
-
-Resolve the shared git directory and confirm it is bare:
+Three of the run's prerequisites are mechanical and validated by one bundled script — the bare-repo layout, the Codex reviewer, and the installed subagent definitions. Run it during the interview, before the closing confirmation, from the project root:
 
 ```bash
-git --git-dir="$(git rev-parse --path-format=absolute --git-common-dir)" rev-parse --is-bare-repository
+bash ~/.claude/skills/orchestrify/scripts/preflight.sh
 ```
 
-This works whether the orchestrator is invoked from inside a worktree or at the bare repo itself — it always checks the *shared* repository, not the current working tree.
+That is the default install path; if the skill is installed elsewhere, run `preflight.sh` from this skill's own `scripts/` directory. The script is read-only and prints one line per gate plus a final result:
 
-- `true` → proceed.
-- `false` → the repo is a conventional checkout. Do not run. Tell the user orchestrify now requires a bare-central layout and stop. The one-time conversion is roughly: move the existing `.git` into a `.bare/` directory, add a top-level `.git` file containing `gitdir: ./.bare`, run `git --git-dir=.bare config core.bare true`, then recreate working copies as worktrees (`git --git-dir=.bare worktree add <branch>`). Converting the user's repo is their decision — surface the steps, do not do it autonomously.
+- `BARE_REPO: PASS|FAIL` — the project is a bare repository with worktrees.
+- `TRUNK_CANDIDATE: <branch>` — informational, not a gate: the bare repo's default branch, the run's likely trunk. Confirm the trunk with the user; the integration branch is created from its tip.
+- `CODEX: PASS|FAIL` — the Codex CLI is installed and authenticated.
+- `AGENTS: PASS|FAIL` — all six subagent definitions are installed.
+- `RESULT: PASS|FAIL` — mirrored by the exit code, which is 0 iff every gate passed.
 
-Also identify the **trunk branch** the run will build on (e.g. `main`) and confirm it exists; the integration branch is created from its tip.
+On `RESULT: PASS`, proceed. On any `FAIL`, do not start — relay the failing gate's remediation below and stop. These are pre-flight gates, not mid-run questions.
+
+**Why each gate, and how to fix a `FAIL`:**
+
+- **Bare repo** is the substrate the entire run depends on: every working copy — the user's, the integration tree, each item — is a peer worktree off one shared bare object store, so there is no privileged main checkout to corrupt. A `FAIL` means the repo is a conventional checkout. Converting it is the user's decision — surface the steps, do not do it autonomously: move the existing `.git` into a `.bare/` directory, add a top-level `.git` file containing `gitdir: ./.bare`, run `git --git-dir=.bare config core.bare true`, then recreate working copies as worktrees (`git --git-dir=.bare worktree add <branch>`).
+- **Codex** is the independent, cross-model reviewer in stage 4c — a different model family from the Claude implementer, so it does not share the implementer's blind spots. A missing or unauthenticated `codex` would fail every item at review time, deep into an autonomous run. Fix: install with `npm i -g @openai/codex`, or authenticate with `codex login` (or `codex login --with-api-key`). Installing or authenticating is the user's action — surface the command, do not do it autonomously.
+- **Subagent definitions** — every Claude stage is a dedicated subagent type (`orchestrify-plan`, `-implement`, `-fix`, `-commit`, `-merge`, `-integrate`) whose instructions load as its system prompt; the orchestrator spawns by type and passes only per-item values. They ship with the skill and are installed into the Claude agents directory by `install-claude-skills.sh`, which the harness loads at session start. A `FAIL` means the skill is not fully installed — re-run `install-claude-skills.sh` from the skills repo. If they were only just installed this session, the harness may not have picked them up yet; a fresh session loads them.
 
 ### Permissions pre-flight
 
@@ -62,20 +69,6 @@ The skill cannot flip the mode itself, so confirm it during the interview before
 - **Settings** — `"permissions": { "defaultMode": "bypassPermissions" }` in `.claude/settings.local.json`, for a repo where runs are always unattended.
 
 Make the tradeoff explicit to the user: bypass mode disables the approval gate for the *whole* session, not just orchestrify's commands. That is the point — the run is designed to be unattended — but any other work in the same session loses the gate too, so a dedicated session for the run is the clean choice. If the user will not enable bypass mode, do not start: the run cannot be autonomous, and an allow-list will only let it pause partway.
-
-### Codex reviewer pre-flight
-
-The review stage (4c) uses **Codex as an independent, cross-model reviewer** — a different model family from the Claude implementer, so it does not share the implementer's blind spots. The run therefore needs the Codex CLI installed and authenticated before it starts; a missing or unauthenticated `codex` would fail every item at review time, deep into an autonomous run. Validate it during the interview, before the closing confirmation — another pre-flight gate, not a mid-run question:
-
-```bash
-command -v codex && codex login status
-```
-
-- Both succeed → proceed.
-- `codex` not found → tell the user to install the Codex CLI (`npm i -g @openai/codex`) and stop.
-- Not logged in → tell the user to run `codex login` (or supply an API key via `codex login --with-api-key`) and stop.
-
-Installing or authenticating Codex is the user's action — surface the command, do not do it autonomously.
 
 ## Step 2: Write the spec and work breakdown
 
@@ -215,188 +208,93 @@ Repeat until every item is `merged` or `blocked`:
 
 ### 4a. Plan agent (read-only)
 
-Spawn one subagent per unblocked item with this prompt, filling the placeholders:
+Spawn one `orchestrify-plan` subagent per unblocked item, in parallel — planning is read-only and safe to parallelize. The agent's instructions are its definition; the spawn prompt carries only the per-item values:
 
-```text
-You are planning ONE work item of a larger feature. Read-only: do not
-modify any source files. You cannot ask the user questions; if something
-is ambiguous, choose the option most consistent with the spec and record
-it under Decisions.
+- the run directory
+- the item's ID and title
+- the files it owns
 
-Spec: <run-dir>/spec.md — read it first. Honor the Interfaces section
-exactly; never invent alternatives to the contracts it defines.
-
-Your work item: <ID> — <title>. Files owned: <paths>.
-
-Explore the codebase as much as needed. Your exploration dies with you —
-only the plan file survives, so make it self-sufficient for a fresh
-implementer with no other context. Write conclusions and pointers, not
-transcripts of your exploration.
-
-Write your plan to <run-dir>/plans/<ID>.md:
-
-# Plan: <ID> — <title>
-
-## Approach
-<How to implement this item, and why this way. 2-5 sentences.>
-
-## Steps
-- [ ] <Concrete step with file path and what changes>
-
-## Read First
-- <file:lines> — <why the implementer must read this before coding>
-
-## Gotchas
-- <Non-obvious constraint, trap, or interaction discovered while exploring>
-
-## Rejected
-- <Approach considered and rejected, one line each, with the reason>
-
-## Decisions
-- <Ambiguity found and the choice made>
-
-## Verification
-- <Command to run and the expected result>
-
-Return a 3-5 sentence summary: approach, the files you will touch
-(confirm they match your declared ownership), and any conflict you
-found between the spec and codebase reality. If the item cannot be
-implemented as specified, say so plainly and explain why.
-```
-
-If the agent reports a spec conflict or infeasibility, go to **Escalation**.
+The agent reads `spec.md` itself, explores the codebase, and writes its plan to `<run-dir>/plans/<ID>.md`. If the agent reports a spec conflict or infeasibility, go to **Escalation**.
 
 ### 4b. Implement agent
 
-```text
-You are implementing ONE work item from a plan. You cannot ask the user
-questions.
+Spawn one `orchestrify-implement` subagent for the item, inside its worktree. The spawn prompt carries only the per-item values:
 
-Work EXCLUSIVELY inside this worktree: <repo-root>/orchestrify-<slug>-<ID>. All
-reads, edits, and commands run there — never touch another worktree.
-If the build needs dependencies installed in the worktree, install them
-first.
+- the worktree path (`<repo-root>/orchestrify-<slug>-<ID>`)
+- the run directory
+- the item's ID and title
+- the files it owns
 
-Read first, in order: <run-dir>/spec.md, then <run-dir>/plans/<ID>.md,
-then every file under its Read First section. Honor the spec's
-Interfaces section exactly.
-
-Stay within the files this item owns: <paths>, plus its tests. Touching
-other files is allowed when the work genuinely requires it, but record
-each case under Deviations — overlap with parallel items becomes a
-merge conflict someone must resolve.
-
-Execute the plan's steps, checking them off in the plan file as you go.
-Follow the codebase's existing conventions. Prefer small, focused
-functions, descriptive intermediate variables, and minimal mutable
-state. No speculative abstractions.
-
-The plan is a living document, not a frozen spec. If reality diverges
-from it — an API behaves differently, a step is wrong or unnecessary,
-you must touch an unowned file — do the smallest reasonable deviation
-and append it to a "## Deviations" section in the plan file with the
-reason. Do not silently skip or silently improvise.
-
-When done, run the plan's Verification commands and fix failures.
-Do not commit.
-
-Return: what you implemented, verification results (pass/fail with
-detail), every deviation, and anything you had to guess. If you could
-not complete the item, state exactly where and why you stopped.
-```
-
-If the agent could not complete the item or deviations undermine the spec, go to **Escalation**.
+The agent reads `spec.md` and the plan itself, implements the steps in the worktree, records deviations in the plan file, and runs the plan's Verification commands without committing. If the agent could not complete the item or deviations undermine the spec, go to **Escalation**.
 
 ### 4c. Review (independent Codex reviewer) + fix loop
 
 The reviewer is **Codex, not Claude** — a different model family from the implementer. This is the strongest form of the "fresh eyes" this stage needs: the implementer was Claude, so a Claude reviewer still shares its training distribution, priors, and blind spots; Codex does not, so it catches a class of defects a same-family reviewer is systematically blind to. Codex reviews **read-only** and writes its findings to an artifact file; a separate Claude **fix agent** applies the fixes. Reviewer-reports / fixer-fixes stays a hard separation, now across two model families.
 
-**Codex review (read-only, external).** The orchestrator runs this directly — it is a deterministic command like the `git worktree` calls, and Codex's heavy context lives and dies in its own process; only the findings file comes back, so nothing loads into the orchestrator's context. `codex exec review` has no `--cd` flag and review mode never edits source, so run it **from inside the item's worktree**:
+**Codex review (read-only, external).** The orchestrator runs this directly — it is a deterministic command like the `git worktree` calls, and Codex's heavy context lives and dies in its own process; only the findings file comes back, so nothing loads into the orchestrator's context. The fragile mechanics — `codex exec review` has no `--cd` so it must run from inside the worktree, the mandatory `< /dev/null`, the GNU timeout bound, retry-once-on-failure, and the guarantee that a non-empty artifact exists before the fix agent reads it — are all captured in this skill's `scripts/codex-review.sh`. The orchestrator's only jobs are to assemble the per-item prompt and act on the script's result.
 
-```bash
-cd <repo-root>/orchestrify-<slug>-<ID>
-codex exec review --uncommitted \
-  -o <run-dir>/reviews/<ID>-codex.md \
-  "You are reviewing the uncommitted changes for ONE work item of a
-   larger feature, adversarially: assume at least one real defect and
-   that the tests are weaker than they look. An approval that finds
-   nothing is the failure mode. Distrust exactly the parts that look
-   obviously fine.
-
-   Hard contract — the Interfaces section of <run-dir>/spec.md:
-   <paste the Interfaces text relevant to this item>.
-   Intent and recorded Deviations: <run-dir>/plans/<ID>.md.
-   This item owns: <paths>.
-
-   Hunt for: bugs, broken edge cases, violations of the spec interfaces,
-   regressions to surrounding code, missing or weak tests, recorded
-   deviations that are actually wrong calls, and files changed outside
-   the item's ownership that the plan does not justify. Attack the tests
-   specifically — the same model wrote the code and the tests, so a green
-   run proves little; name the edge cases, error paths, and interface
-   boundaries the suite does NOT exercise.
-
-   For each finding give: severity (Critical/High/Medium/Low), file:line,
-   what is wrong, and where the fix belongs — local code, the plan's
-   approach, the spec interfaces, or another work item. Do not modify
-   files; report only."
-```
-
-Findings land in `<run-dir>/reviews/<ID>-codex.md` (add `--json` for machine-readable events). The orchestrator reads only that artifact, never the diff itself — the same file-handoff rule as every other stage.
-
-**Fix agent (Claude).** Spawn a Claude subagent to apply the fixes:
+Write the adversarial review prompt to `<run-dir>/reviews/<ID>-prompt.md`, substituting the per-item values:
 
 ```text
-You are fixing review findings for ONE work item. You cannot ask the
-user questions.
+You are reviewing the uncommitted changes for ONE work item of a
+larger feature, adversarially: assume at least one real defect and
+that the tests are weaker than they look. An approval that finds
+nothing is the failure mode. Distrust exactly the parts that look
+obviously fine.
 
-Work EXCLUSIVELY inside this worktree: <repo-root>/orchestrify-<slug>-<ID>.
+Hard contract — the Interfaces section of <run-dir>/spec.md:
+<paste the Interfaces text relevant to this item>.
+Intent and recorded Deviations: <run-dir>/plans/<ID>.md.
+This item owns: <paths>.
 
-Read, in order: <run-dir>/spec.md (the Interfaces section is a hard
-contract), <run-dir>/plans/<ID>.md (intent + Deviations), then the
-Codex review findings at <run-dir>/reviews/<ID>-codex.md. The changes
-under review are the output of `git diff` in the worktree plus its
-untracked files.
+Hunt for: bugs, broken edge cases, violations of the spec interfaces,
+regressions to surrounding code, missing or weak tests, recorded
+deviations that are actually wrong calls, and files changed outside
+the item's ownership that the plan does not justify. Attack the tests
+specifically — the same model wrote the code and the tests, so a green
+run proves little; name the edge cases, error paths, and interface
+boundaries the suite does NOT exercise.
 
-For each finding rooted in local code, fix it directly in the worktree,
-and add the tests the reviewer says are missing rather than trusting the
-existing suite. Re-run the plan's Verification commands after fixing and
-make them pass.
-
-Do NOT fix — report instead: any finding the reviewer rooted in the
-plan's approach, the spec's interfaces, or another work item's files. A
-finding you judge incorrect you may decline, but say why.
-
-Return: per finding, fixed / declined (with reason) / out-of-scope
-(plan|spec|cross-item); the tests you added; and the final verification
-result.
+For each finding give: severity (Critical/High/Medium/Low), file:line,
+what is wrong, and where the fix belongs — local code, the plan's
+approach, the spec interfaces, or another work item. Do not modify
+files; report only.
 ```
 
-The fix loop: after the fix agent finishes, **re-run the Codex reviewer once** over the new state. If it returns no Critical or High findings, proceed to commit. If code-rooted Critical/High findings remain, run one more fix round — **maximum 2 fix rounds** — then go to **Escalation**. Any finding the reviewer roots in the plan, the spec's interfaces, or another work item goes to **Escalation** immediately: the fix agent cannot resolve it inside this one worktree.
+Then call the script (the default install path; if the skill is installed elsewhere, run it from this skill's own `scripts/` directory), passing the worktree, the findings path, and the prompt file:
+
+```bash
+~/.claude/skills/orchestrify/scripts/codex-review.sh \
+  <repo-root>/orchestrify-<slug>-<ID> \
+  <run-dir>/reviews/<ID>-codex.md \
+  <run-dir>/reviews/<ID>-prompt.md
+```
+
+The script retries once internally and prints one machine-readable line last: `CODEX_REVIEW: COMPLETED <file>` (exit 0, artifact written and non-empty) or `CODEX_REVIEW: FAILED <reason>` (non-zero). It guards the two traps that otherwise read as "no findings": the codex 0.120.0+ stdin hang (caught by `< /dev/null` and the timeout), and a clean exit over an empty `-o` file (treated as failure, not a clean pass) — so you never reconstruct the `codex exec` flags yourself. **On `FAILED`, do not proceed on the empty or partial findings file** — mark the item `blocked` per **Escalation** with the reason the script reports ("Codex review did not complete (timeout/error after one retry)") and keep its worktree for a follow-up run. Never treat a missing or truncated review artifact as a clean pass.
+
+**Throttle review concurrency.** Plan and implement stages parallelize freely, but the Codex reviews contend for one Codex auth — on a ChatGPT-subscription auth, firing several at once triggers 429 rate-limit backoff that turns every concurrent review slow (the parallel-review case is exactly where the multi-minute stalls cluster). Cap **concurrent invocations of the review script at 2-3** even when more items are ready to review; let the rest queue. This bounds wall-clock without serializing the whole run.
+
+Findings land in `<run-dir>/reviews/<ID>-codex.md`. The orchestrator reads only that artifact, never the diff itself — the same file-handoff rule as every other stage.
+
+**Fix agent (Claude).** Spawn one `orchestrify-fix` subagent to apply the fixes, inside the item's worktree. The spawn prompt carries only the per-item values:
+
+- the worktree path (`<repo-root>/orchestrify-<slug>-<ID>`)
+- the run directory
+- the item's ID and title
+
+The agent reads `spec.md`, the plan, and the Codex findings at `<run-dir>/reviews/<ID>-codex.md` itself; it fixes code-rooted findings, adds missing tests, re-runs Verification, and reports findings it cannot resolve inside the worktree (rooted in the plan, the spec interfaces, or another item).
+
+The fix loop: after the fix agent finishes, **re-run `scripts/codex-review.sh` once** (reusing the same `<ID>-prompt.md`) over the new state. If it returns no Critical or High findings, proceed to commit. If code-rooted Critical/High findings remain, run one more fix round — **maximum 2 fix rounds** — then go to **Escalation**. Any finding the reviewer roots in the plan, the spec's interfaces, or another work item goes to **Escalation** immediately: the fix agent cannot resolve it inside this one worktree.
 
 ### 4d. Commit agent
 
-```text
-Create one git commit for completed work item <ID> — <title>, on its
-item branch inside this worktree: <repo-root>/orchestrify-<slug>-<ID>. Run all
-git commands there.
+Spawn one `orchestrify-commit` subagent for the item, inside its worktree. The spawn prompt carries only the per-item values:
 
-Inspect with `git status` and `git diff`. Stage only files belonging to
-this item — by name, never `git add -A` — plus <run-dir>/plans/<ID>.md
-if changed. Never stage secrets (.env, credentials, keys).
+- the worktree path (`<repo-root>/orchestrify-<slug>-<ID>`)
+- the run directory
+- the item's ID and title
 
-Write a Conventional Commits message: `<type>(<scope>): <description>`,
-imperative mood, lower-case, no trailing period, under 70 characters.
-Add a body if the change needs context; mention significant deviations
-from the plan. Do not push, do not amend.
-
-The message must describe only the change itself. Never mention Claude,
-AI, agents, this orchestration process, or the user in the subject,
-body, or footers — no Co-Authored-By or Generated-with trailers, no
-attribution of any kind.
-
-Return the commit hash and the message used.
-```
+The agent inspects the worktree, stages only this item's files by name (plus its plan file), writes a Conventional Commits message that never attributes the work to Claude or this process, and returns the commit hash and message.
 
 Before recording the hash, check the returned message: if it mentions
 Claude, AI, agents, the orchestration process, or the user anywhere —
@@ -410,35 +308,14 @@ Record the hash in `state.md` and mark the item `committed`.
 
 Run merges one at a time, in dependency order — completion order for siblings. Merging is where deferred collisions become visible, and where they get resolved with full context.
 
-```text
-Merge completed work item <ID> — <title> into the integration branch
-orchestrify/<slug>. Work EXCLUSIVELY in the integration worktree:
-<repo-root>/orchestrify-<slug>. Never touch the user's worktrees.
+Spawn one `orchestrify-merge` subagent, inside the integration worktree. The spawn prompt carries only the per-item values:
 
-Run: git merge --no-ff orchestrify/<slug>-<ID>
+- the integration worktree path (`<repo-root>/orchestrify-<slug>`)
+- the run directory
+- the item's ID and title
+- the item branch (`orchestrify/<slug>-<ID>`) and the integration branch (`orchestrify/<slug>`)
 
-If there are conflicts, resolve them yourself. Your sources of truth,
-in order: the Interfaces section of <run-dir>/spec.md, then the plan
-files of BOTH sides of the conflict under <run-dir>/plans/ (the
-Deviations sections explain why overlapping changes exist). Preserve
-the intent of both work items; when the two sides are genuinely
-incompatible — not textually, but in what they mean — abort the merge
-and report instead of guessing.
-
-After merging, verify the RESULT, not just the conflict resolution:
-run the build, the affected tests, and the merged item's Verification
-commands from its plan. A clean textual merge can still be wrong —
-both branches may pass alone and break together. Fix small breakage
-directly and commit it as part of the merge; report anything larger.
-
-Any commit you create must describe only the change itself. Never
-mention Claude, AI, agents, this orchestration process, or the user —
-no Co-Authored-By or Generated-with trailers, no attribution of any
-kind.
-
-Return: merged or aborted, conflicts encountered and how each was
-resolved, verification result, and any fix you applied.
-```
+The agent runs `git merge --no-ff`, resolves conflicts using the spec Interfaces and both sides' plan files, verifies the merged result (build, affected tests, the item's Verification commands), and reports whether it merged or aborted on a semantic conflict.
 
 After a successful merge, remove the worktree and branch
 (`git worktree remove <repo-root>/orchestrify-<slug>-<ID>` and
@@ -467,24 +344,12 @@ When the doubt rule is prefer-smaller-scope and a feature can be cleanly cut rat
 
 ## Step 5: Integration verification
 
-Per-item review catches local bugs; only this phase catches pieces that do not compose. After the loop drains, spawn a final agent:
+Per-item review catches local bugs; only this phase catches pieces that do not compose. After the loop drains, spawn one `orchestrify-integrate` subagent. The spawn prompt carries only:
 
-```text
-Verify an assembled multi-part implementation. Work in the integration
-worktree: <repo-root>/orchestrify-<slug>. Read <run-dir>/spec.md, then:
-run the full build, the full test suite, and exercise each spec feature
-end to end the way a user would.
+- the integration worktree path (`<repo-root>/orchestrify-<slug>`)
+- the run directory
 
-Judge against the spec's Outcome and Features sections — not against
-the individual plans. Look especially at the seams: do the work items
-actually compose, are the Interfaces contracts honored on both sides,
-does anything only work in isolation?
-
-Fix small integration bugs directly and report them. Report larger
-mismatches without fixing.
-
-Return: pass/fail per spec feature, fixes applied, and remaining gaps.
-```
+The agent reads `spec.md`, runs the full build and test suite, exercises each spec feature end to end, fixes small integration bugs, and reports per-feature pass/fail plus any larger mismatches.
 
 If it applied fixes, run the review stage (4c) — Codex review plus the Claude fix agent — over them in the integration worktree, then the commit agent. If it found larger mismatches, treat them under **Escalation**.
 
@@ -502,6 +367,7 @@ Tell the user:
 
 - Never attribute commits to Claude. No commit produced by any agent in the run — commit agent, merge agent, escalation fixes — may mention Claude, AI, agents, this orchestration process, or the user anywhere in the message: not the subject, not the body, not the footers. No `Co-Authored-By: Claude` and no `Generated with` trailers. Commit messages describe only the change itself.
 - The orchestrator never implements, reviews, or explores deeply itself. If you catch yourself reading source files at length in the main context, delegate.
+- Each Claude stage is a dedicated subagent type (`orchestrify-plan`, `orchestrify-implement`, `orchestrify-fix`, `orchestrify-commit`, `orchestrify-merge`, `orchestrify-integrate`) whose instructions are its definition, loaded as its system prompt. The orchestrator spawns by type and passes only the per-item values — run directory, worktree path, ID and title, owned files, branch names. The heavy stage instructions never enter the orchestrator's context. Codex review (4c) is the exception: it is an external CLI the orchestrator runs directly, not a subagent.
 - State lives in files, not in conversation memory. After any interruption, `state.md` plus the plan files are sufficient to resume.
 - Pass context between stages through artifact files, never by relaying summaries — the implement agent reads the plan file itself, the Codex reviewer reads the plan and diff itself and writes findings to its review file, and the fix agent reads that review file itself.
 - One worktree per work item, created by the orchestrator at the repo root off the shared bare repo, shared by that item's implement, Codex review, fix, and commit stages, removed only after merge. All worktrees — the user's, the integration tree, and each item — are peers off the bare repo; the run never reads or writes the user's worktree. Only the serialized merge agent writes the integration branch, inside the integration worktree.
