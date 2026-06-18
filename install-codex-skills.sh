@@ -8,7 +8,8 @@ Usage: ./install-codex-skills.sh [options]
 Symlink all skills from ./codex into the user skills directory.
 
 Options:
-  --target DIR   Install links into DIR instead of $HOME/.agents/skills
+  --target DIR   Install links into DIR instead of $CODEX_HOME/skills
+                 (defaults to $HOME/.codex/skills when CODEX_HOME is unset)
   --force        Replace existing targets that are not the desired symlink
   --dry-run      Print actions without changing the filesystem
   -h, --help     Show this help
@@ -26,7 +27,8 @@ else
 fi
 
 source_dir="$repo_root/codex"
-target_dir="$HOME/.agents/skills"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+target_dir="$codex_home/skills"
 force=false
 dry_run=false
 
@@ -99,6 +101,11 @@ for skill_dir in "${skill_dirs[@]}"; do
 
   skill_name="$(basename "$skill_dir")"
   link_path="$target_dir/$skill_name"
+
+  if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+    echo "skip: $skill_dir has no SKILL.md" >&2
+    continue
+  fi
 
   if same_link_target "$link_path" "$skill_dir"; then
     echo "ok: $skill_name already linked"

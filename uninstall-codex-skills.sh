@@ -8,7 +8,8 @@ Usage: ./uninstall-codex-skills.sh [options]
 Remove symlinks for this repo's ./codex skills from the user skills directory.
 
 Options:
-  --target DIR   Remove links from DIR instead of $HOME/.agents/skills
+  --target DIR   Remove links from DIR instead of $CODEX_HOME/skills
+                 (defaults to $HOME/.codex/skills when CODEX_HOME is unset)
   --dry-run      Print actions without changing the filesystem
   -h, --help     Show this help
 EOF
@@ -25,7 +26,8 @@ else
 fi
 
 source_dir="$repo_root/codex"
-target_dir="$HOME/.agents/skills"
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+target_dir="$codex_home/skills"
 dry_run=false
 
 while [[ $# -gt 0 ]]; do
@@ -95,6 +97,7 @@ removed_count=0
 
 for skill_dir in "${skill_dirs[@]}"; do
   [[ -d "$skill_dir" ]] || continue
+  [[ -f "$skill_dir/SKILL.md" ]] || continue
 
   skill_name="$(basename "$skill_dir")"
   link_path="$target_dir/$skill_name"

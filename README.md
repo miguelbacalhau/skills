@@ -17,7 +17,7 @@ Install the Codex versions into the user skills directory with symlinks:
 ./install-codex-skills.sh
 ```
 
-By default, this links `codex/*` into `$HOME/.agents/skills`.
+By default, this links `codex/*` into `${CODEX_HOME:-$HOME/.codex}/skills`.
 Use `--dry-run` to preview, `--target DIR` to install elsewhere, and `--force`
 to replace existing targets.
 

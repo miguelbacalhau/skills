@@ -1,0 +1,4 @@
+interface:
+  display_name: "Orchestrify"
+  short_description: "Drive features through isolated parallel worktrees"
+  default_prompt: "Use $orchestrify to take this feature idea from requirements through an integration branch."
