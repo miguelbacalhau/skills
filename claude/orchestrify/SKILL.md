@@ -83,6 +83,7 @@ Create the run directory at the project root — the directory that holds the ba
 └── .orchestrify/YYYYMMDD-HHMMSS-<slug>/
     ├── spec.md     # requirements, interfaces, work breakdown
     ├── state.md    # live work-item status, owned by the orchestrator
+    ├── report.md   # final run report, written by the orchestrator at the end
     ├── plans/      # one plan file per work item, written by plan agents
     └── reviews/    # one Codex review artifact per item, written by the review stage
 ```
@@ -355,13 +356,43 @@ If it applied fixes, run the review stage (4c) — Codex review plus the Claude 
 
 ## Step 6: Report
 
-Tell the user:
+Write the run report to `<run-dir>/report.md` **first**, then relay its highlights to the user. The file is the durable record of the run: it outlives the conversation, so anyone resuming, auditing, or picking up a follow-up run reads it instead of scrolling back. The orchestrator already holds everything it needs — pull each section from `state.md`, the spec's `## Decisions` log, and the integration agent's report; do not re-explore. Generate the completion timestamp with `date +"%Y-%m-%d %H:%M"`.
 
-- What shipped, item by item, with commit hashes.
-- Deviations from the original spec and why.
-- Anything `blocked` and the decision it is waiting on.
-- The integration verification result, feature by feature.
-- Suggested next step: the deliverable is the `orchestrify/<slug>` branch (built in the integration worktree). The user lands it onto trunk from their own worktree — `git merge --no-ff orchestrify/<slug>` — then optionally pushes. Plus any follow-up run for blocked items.
+```markdown
+# Report: <idea summary>
+
+**Run:** <run-dir>
+**Completed:** <YYYY-MM-DD HH:MM>
+**Deliverable:** `orchestrify/<slug>`
+
+## Shipped
+
+| ID  | Item    | Commit | Status |
+| --- | ------- | ------ | ------ |
+| W1  | <title> | <hash> | merged |
+
+## Deviations
+
+- <What changed from the original spec and why, citing the doubt rule where it applied. Mirrors the spec's Decisions log. "None" if the run matched the spec.>
+
+## Blocked
+
+- <Item, the one-line reason, and the decision the user must make between the recorded options. "None" if nothing is blocked.>
+
+## Integration verification
+
+- <Feature>: pass | fail — <detail, per spec feature>
+
+## Follow-ups
+
+- <Deferred work, known gaps, weak spots the reviews flagged but did not block, and any follow-up run needed for blocked items — each with the worktree/branch that still holds its partial work.>
+
+## Landing
+
+The deliverable is the `orchestrify/<slug>` branch, built in the integration worktree. Land it from your own worktree with `git merge --no-ff orchestrify/<slug>`, then optionally push.
+```
+
+After writing the file, give the user a short spoken summary — what shipped with commit hashes, anything `blocked` and the decision it waits on, the integration result feature by feature, and the path to the full `report.md` — then the landing command. The report file is the authoritative version; the spoken summary just points at it.
 
 ## Guidelines
 

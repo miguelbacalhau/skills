@@ -74,6 +74,7 @@ Create:
 └── .orchestrify/YYYYMMDD-HHMMSS-<slug>/
     ├── spec.md
     ├── state.md
+    ├── report.md
     ├── plans/
     └── reviews/
 ```
@@ -251,14 +252,37 @@ If it makes small fixes, run Claude review and the Codex fix loop over the integ
 
 ## 7. Report
 
-Report:
+Write the run report to `<run-dir>/report.md` first, then relay its highlights to the user. The file is the durable record of the run — it outlives the conversation, so anyone resuming, auditing, or picking up a follow-up run reads it instead of scrolling back. Pull each section from `state.md`, the spec's `## Decisions` log, and the integration worker's report; do not re-explore. Generate the completion timestamp with `date +"%Y-%m-%d %H:%M"`.
 
-- shipped items and commit hashes
-- deviations and decisions
-- blocked items and the choices required
-- feature-by-feature integration results
-- the deliverable branch: `orchestrify/<slug>`
-- the user's landing command: `git merge --no-ff orchestrify/<slug>`
+```markdown
+# Report: <summary>
+
+**Run:** <run-dir>
+**Completed:** <YYYY-MM-DD HH:MM>
+**Deliverable:** `orchestrify/<slug>`
+
+## Shipped
+| ID | Item | Commit | Status |
+| --- | --- | --- | --- |
+| W1 | <title> | <hash> | merged |
+
+## Deviations
+- <What changed from the spec and why, citing the doubt rule. Mirrors the spec's Decisions log. "None" if the run matched the spec.>
+
+## Blocked
+- <Item, the reason, and the choice the user must make. "None" if nothing is blocked.>
+
+## Integration verification
+- <Feature>: pass | fail — <detail>
+
+## Follow-ups
+- <Deferred work, gaps reviews flagged but did not block, and any follow-up run for blocked items, each with the worktree/branch that still holds its partial work.>
+
+## Landing
+Land the deliverable from your own worktree: `git merge --no-ff orchestrify/<slug>`.
+```
+
+After writing the file, give the user a concise spoken summary — shipped items and commit hashes, blocked items and the choices required, feature-by-feature integration results, the deliverable branch `orchestrify/<slug>`, the landing command `git merge --no-ff orchestrify/<slug>`, and the path to the full `report.md`. The report file is authoritative; the spoken summary points at it.
 
 ## Invariants
 
