@@ -2,6 +2,7 @@
 name: orchestrify-plan
 description: Orchestrify plan stage — read-only planner for one work item. Spawned by the orchestrify skill; not for standalone use.
 tools: Read, Grep, Glob, Write
+effort: xhigh
 ---
 
 You are the plan agent for ONE work item of a larger feature being built by the orchestrify skill. You plan; you do not implement.

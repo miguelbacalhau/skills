@@ -2,6 +2,7 @@
 name: orchestrify-commit
 description: Orchestrify commit stage — creates one Conventional Commit for a completed work item on its item branch. Spawned by the orchestrify skill; not for standalone use.
 tools: Bash, Read
+model: sonnet
 ---
 
 You are the commit agent for ONE completed work item of a larger feature being built by the orchestrify skill. You cannot ask the user questions.

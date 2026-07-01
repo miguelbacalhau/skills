@@ -217,7 +217,7 @@ Throttle concurrent Claude reviews to 2-3 to avoid auth and rate-limit contentio
 
 ### Commit
 
-Read `references/commit-agent.md` and spawn a commit worker. Validate its returned commit message. If it mentions Codex, AI, agents, orchestration, or the user, soft-reset the commit and retry with the violation quoted.
+Read `references/commit-agent.md` and spawn a commit worker on a lighter Codex model tier (a smaller model or reduced reasoning effort) — writing the message is mechanical and does not need the reasoning tier the build stages use. Validate its returned commit message. If it mentions Codex, AI, agents, orchestration, or the user, soft-reset the commit and retry with the violation quoted.
 
 Record the commit hash and mark the item `committed`.
 
