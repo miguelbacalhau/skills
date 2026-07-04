@@ -11,11 +11,11 @@ A skill may bundle subagent definitions in an `agents/` subdirectory
 (e.g. claude/orchestrify/agents/*.md). Those files are also symlinked
 into the Claude agents directory so the harness can load them.
 
-A skill may also declare script dependencies in `scripts/package.json`
-(e.g. claude/orchestrify/scripts). Those are installed with `npm install`
-so the linked skill works without a separate setup step; node_modules
-lands in the repo, and the directory-level skill symlink means the
-installed skill resolves it too.
+A skill may also declare script dependencies in `scripts/package.json`.
+Those are installed with `npm install` so the linked skill works without
+a separate setup step. No bundled skill currently declares any — the
+pass is a no-op until one does. (Codex itself is deliberately NOT an npm
+dependency of any skill: orchestrify uses the global codex binary.)
 
 Options:
   --target DIR          Install skill links into DIR instead of $HOME/.claude/skills

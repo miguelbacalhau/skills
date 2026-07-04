@@ -1,6 +1,6 @@
 ---
 name: initify
-description: Set up a repository to satisfy orchestrify's pre-flight — the bare-repo-with-worktrees layout with a default-branch worktree, the Codex SDK reviewer, and the installed subagent definitions. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orchestrify runs, or when orchestrify's pre-flight failed and they want the gates fixed. Interactive and consent-per-step — it restructures repositories and installs tools, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
+description: Set up a repository to satisfy orchestrify's pre-flight — the bare-repo-with-worktrees layout with a default-branch worktree, the codex MCP server registration for the cross-model reviewer, and the installed subagent definitions. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orchestrify runs, or when orchestrify's pre-flight failed and they want the gates fixed. Interactive and consent-per-step — it restructures repositories and installs tools, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
 args: <path or clone URL, optional>
 user-invocable: true
 ---
@@ -106,8 +106,20 @@ Nothing in this touches history, refs, remotes, or config beyond `core.bare` —
 
 Fix only the gates the pre-flight flagged, each with consent:
 
-- **Codex SDK** — requires Node ≥ 18 (`node --version`; installing Node is the user's action if it is missing). Install by running `npm install` in the orchestrify skill's `scripts/` directory — it installs the SDK and a vendored codex binary, so no global install is needed. Authentication is interactive and must be the user's own action: suggest they run `! <scripts>/node_modules/.bin/codex login` in this session, then re-check with `! <scripts>/node_modules/.bin/codex login status`.
-- **Subagent definitions** — the seven `orchestrify-*` agents must be linked into `~/.claude/agents/`. Run `install-claude-skills.sh` from the skills repository that provided this skill. Note that a fresh session may be needed before the harness picks them up.
+- **Codex CLI** — orchestrify's cross-model reviewer is the **global codex binary on PATH**, at or above the minimum version the pre-flight names. Codex is **never installed via npm** — no `npm i -g @openai/codex`, no vendored binary: if it is missing or too old, the user installs or upgrades it from the official non-npm distribution (`brew install codex`, or the GitHub release binaries). Authentication is interactive and must be the user's own action: suggest they run `! codex login` in this session, then re-check with `! codex login status`.
+- **Codex MCP registration (per repo)** — the reviewer runs through `codex mcp-server`, which Claude Code only loads if the project registers *and* enables it. Three writes, each merged into any existing file rather than overwriting, in the directory Claude Code sessions for this repo launch from:
+
+  1. `.mcp.json` — the server entry, PATH-resolved so the file stays portable across machines:
+
+     ```json
+     { "mcpServers": { "codex": { "command": "codex", "args": ["mcp-server"] } } }
+     ```
+
+  2. `.claude/settings.local.json` — **enablement**: project-scope MCP servers are consent-gated per project, so a registered-but-unenabled server silently doesn't load in a fresh or headless session (and a restart alone does not fix it). Add `"codex"` to `enabledMcpjsonServers`, merging with any existing list — prefer the named list over the blunter `"enableAllProjectMcpServers": true`.
+  3. The settings `env` block — `"MCP_TOOL_TIMEOUT": "1200000"` (~20 minutes). Not larger: the workflow retries reviews at two levels, so this value multiplies into the worst case per item; at ~20 minutes that worst case stays around 80 minutes, comparable to the old per-attempt bound, where 1 hour would balloon it to several hours.
+
+  Caveat to state after writing: MCP servers and settings env load at **session start** — register, then start a fresh session before running orchestrify. Its pre-flight greps for all three writes, and its Step 1 additionally confirms the tool actually resolves in the live session.
+- **Subagent definitions** — the eight `orchestrify-*` agents must be linked into `~/.claude/agents/`. Run `install-claude-skills.sh` from the skills repository that provided this skill. Note that a fresh session may be needed before the harness picks them up.
 
 Optionally — offer, never default: for a repo where orchestrify runs are always unattended, write `"permissions": { "defaultMode": "bypassPermissions" }` into `<repo-root>/<branch>/.claude/settings.local.json`. State the tradeoff plainly: it disables the approval gate for every session opened in that worktree, not just orchestrify runs. Declining is fine — the mode can be toggled per session with Shift+Tab instead.
 

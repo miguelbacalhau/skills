@@ -15,9 +15,9 @@ Three skills take a feature from rough idea to a committed integration branch:
    from execution, so the conversation can take as many rounds as it needs.
 2. **initify** — one-time, consent-per-step setup that makes a repository pass
    orchestrify's pre-flight: the bare-repo-with-worktrees layout, the
-   cross-model reviewer (the vendored Codex SDK for Claude Code runs; the
-   Claude CLI plus GNU timeout for Codex runs), and the bundled subagent
-   definitions.
+   cross-model reviewer (the global codex binary registered as a per-project
+   MCP server for Claude Code runs; the Claude CLI plus GNU timeout for Codex
+   runs), and the bundled subagent definitions.
 3. **orchestrify** — the autonomous run. It discovers the brief, confirms it
    once, writes a spec with a dependency-ordered work breakdown, then executes
    a deterministic work loop: each item is planned and implemented in its own
@@ -33,14 +33,15 @@ Two design choices do most of the work:
   Parallel items can never corrupt each other's files — overlap surfaces as an
   explicit merge conflict, resolved by a merge agent holding both plans.
 - **Cross-model review.** Each implementation is reviewed by the *other*
-  model: Claude Code runs use Codex as the independent reviewer, and Codex
-  runs use Claude — an unbiased second opinion before anything is committed.
+  model: Claude Code runs drive Codex through its MCP server as the
+  independent reviewer, and Codex runs use Claude — an unbiased second
+  opinion before anything is committed.
 
 ## Repository layout
 
 | Path | Contents |
 |------|----------|
-| `claude/` | Claude Code skills. `orchestrify/` bundles subagent definitions (`agents/*.md`) and scripts (pre-flight, Codex review, the Workflow-tool work loop). |
+| `claude/` | Claude Code skills. `orchestrify/` bundles subagent definitions (`agents/*.md`, the Codex review stage among them) and scripts (pre-flight, the Workflow-tool work loop). |
 | `codex/` | Codex skills. `orchestrify/` bundles agent config (`agents/openai.yaml`) and per-stage reference prompts (`references/*.md`). |
 | `install-*.sh` / `uninstall-*.sh` | Symlink installers for each implementation. |
 

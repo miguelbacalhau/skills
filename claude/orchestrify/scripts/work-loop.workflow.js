@@ -13,18 +13,19 @@
 // `budget`.
 //
 // args: {
-//   runDir            .orchestrify/<timestamp>-<slug> — spec.md, plans/, reviews/
-//   repoRoot          parent of the bare repo; all worktrees live here
+//   runDir            .orchestrify/<timestamp>-<slug> — spec.md, plans/, reviews/ (absolute)
+//   repoRoot          parent of the bare repo; all worktrees live here (absolute)
 //   slug              run slug; integration worktree is <repoRoot>/orchestrify-<slug>
 //   integrationBranch orchestrify/<slug>
-//   reviewScript      absolute path to this skill's codex-review.mjs
 //   items             [{ id, title, deps: [ids], files: [paths] }] from the Work Breakdown
 // }
 //
-// Review prompts are not inputs: codex-review.mjs assembles each one from the
-// static template shipped next to it (review-prompt.md), substituting only the
-// run directory, plan path, and owned files — nothing has to be written into
-// <runDir>/reviews/ before this workflow starts.
+// Review prompts are not inputs: the orchestrify-review agent carries the
+// static adversarial template in its own definition and drives Codex through
+// the project-registered codex MCP server, substituting only the run
+// directory, plan path, and owned files — nothing has to be written into
+// <runDir>/reviews/ before this workflow starts, and there is no review
+// script or shell relay anywhere in the review path.
 
 export const meta = {
   name: 'orchestrify-work-loop',
@@ -50,20 +51,31 @@ if (typeof parsedArgs === 'string') {
 }
 if (typeof parsedArgs !== 'object' || parsedArgs === null)
   throw new Error(`args must be a JSON object (got ${JSON.stringify(args)}) — pass it as a real object, not a JSON-encoded string`)
-const { runDir, repoRoot, slug, integrationBranch, reviewScript } = parsedArgs
+const { runDir, repoRoot, slug, integrationBranch } = parsedArgs
 let items = parsedArgs.items
 if (typeof items === 'string') {
   try { items = JSON.parse(items) } catch { /* fall through to the array check */ }
 }
-for (const [k, v] of Object.entries({ runDir, repoRoot, slug, integrationBranch, reviewScript }))
+for (const [k, v] of Object.entries({ runDir, repoRoot, slug, integrationBranch }))
   if (typeof v !== 'string' || !v)
     throw new Error(`args.${k} must be a non-empty string (got ${JSON.stringify(v)})`)
+// Absolute paths only: every stage agent and the review artifacts resolve
+// these from their own working directories, so a relative path silently
+// points each consumer somewhere different.
+for (const [k, v] of Object.entries({ runDir, repoRoot }))
+  if (!v.startsWith('/'))
+    throw new Error(`args.${k} must be an absolute path (got ${JSON.stringify(v)})`)
 if (!Array.isArray(items) || items.length === 0)
   throw new Error(`args.items must be a non-empty array of work items (got ${JSON.stringify(items)})`)
 const badItems = items.filter(i => !i || typeof i.id !== 'string' || typeof i.title !== 'string' ||
   !Array.isArray(i.deps) || !Array.isArray(i.files))
 if (badItems.length)
   throw new Error(`malformed work items (need string id, string title, array deps, array files): ${JSON.stringify(badItems)}`)
+// "integration" is the reserved id of the integration-fixes review pass — a
+// work item with that id would collide with its artifact paths even though
+// the review mode is now passed explicitly.
+if (items.some(i => i.id === 'integration'))
+  throw new Error('invalid work breakdown: "integration" is a reserved item id')
 const integrationWt = `${repoRoot}/orchestrify-${slug}`
 
 // ---------- structured-output schemas ----------
@@ -87,6 +99,16 @@ const BUILD_ESCALATE = { type: 'object', additionalProperties: false, required: 
     reason: { type: 'string' } } }
 const IMPLEMENT = { type: 'object', additionalProperties: false, required: ['completed', 'summary'],
   properties: { completed: { type: 'boolean' }, summary: { type: 'string' } } }
+// The review agent's whole report: written=false is a retryable failure (the
+// gate never sees it); the counts are the merge gate. They are the agent's
+// count of the findings it wrote — model-reported, a decided trade recorded
+// in the skill; reason is "" when written is true.
+const REVIEW = { type: 'object', additionalProperties: false, required: ['written', 'total', 'criticalHigh', 'reason'],
+  properties: {
+    written: { type: 'boolean' },
+    total: { type: 'integer', minimum: 0 },
+    criticalHigh: { type: 'integer', minimum: 0 },
+    reason: { type: 'string' } } }
 const INTEGRATION = { type: 'object', additionalProperties: false,
   required: ['features', 'fixesApplied', 'gaps'],
   properties: {
@@ -108,48 +130,17 @@ const must = (result, what) => {
 // agent. The command is wrapped so its exit status comes back as a short
 // SH_RC marker the model cannot plausibly mangle — a failed command throws
 // here instead of silently reading as success.
-const sh = async (cmd, label, ph, opts = {}) => {
-  // longRunning: the agent's Bash tool caps foreground calls at 10 minutes,
-  // so the command itself cannot run in the foreground. But a relay that
-  // parks it with run_in_background and simply ends its turn is broken too:
-  // the turn-ending text ("I'm waiting for the background command…") is
-  // captured as the agent's final result and the marker check fails —
-  // observed twice, and no prompt wording prevents a turn from needing text.
-  // So the wait must itself be a BLOCKING tool call: background the command
-  // into a durable log, then block in the foreground on `tail -f | grep -m1`
-  // in repeatable 10-minute windows (no sleep — the tail exits the moment the
-  // command finishes), then cat the log. The relay never has an idle moment
-  // in which to end its turn.
-  const attempts = opts.longRunning ? 2 : 1
-  let lastErr
-  for (let attempt = 1; attempt <= attempts; attempt++) {
-    let prompt, model = 'haiku'
-    if (opts.longRunning) {
-      model = 'sonnet'
-      const logf = `${runDir}/shlogs/${label.replace(/[^A-Za-z0-9._-]/g, '_')}-a${attempt}.log`
-      prompt = [
-        `Execute one long-running command (it may take up to an hour) and return its complete output. Follow these steps exactly, in order:`,
-        `1. Foreground Bash: mkdir -p "${runDir}/shlogs" && : > "${logf}"`,
-        `2. Bash with run_in_background set to true: { ${cmd} ; } >> "${logf}" 2>&1 ; echo "SH_RC=$?" >> "${logf}"`,
-        `3. Foreground Bash with the timeout parameter set to 600000: tail -n +1 -f "${logf}" | grep -m1 "SH_RC="`,
-        `   This call blocks until the command finishes and exits on its own the moment the SH_RC line is written. If it times out or errors, run the exact same call again — as many times as needed. Never end your turn while the command is still running, and never write any interim status text.`,
-        `4. Foreground Bash: cat "${logf}"`,
-        `5. Return the complete file contents verbatim as your final message — plain text, no code fences, no commentary before or after.`,
-      ].join('\n')
-    } else {
-      prompt = `Run exactly this command and return its complete output verbatim — plain text, no code fences, no commentary:\n{ ${cmd} ; } ; echo "SH_RC=$?"`
-    }
-    const raw = await agent(prompt, { model, effort: 'low', label: attempt > 1 ? `${label}~retry` : label, phase: ph })
-    if (raw === null || raw === undefined) { lastErr = new Error(`${label}: command agent was skipped or died`); continue }
-    const out = raw.split('\n').filter(l => !/^\s*`{3,}/.test(l)).join('\n')
-    const marks = [...out.matchAll(/SH_RC=(\d+)/g)]
-    if (!marks.length) { lastErr = new Error(`${label}: no exit-status marker in command output: ${out.trim().slice(-300)}`); continue }
-    const m = marks[marks.length - 1]
-    // A nonzero exit is the command's own verdict, not relay flakiness — never retried.
-    if (m[1] !== '0') throw new Error(`${label}: command exited ${m[1]}: ${out.slice(0, m.index).trim().slice(-300)}`)
-    return out.slice(0, m.index).trim()
-  }
-  throw lastErr
+const sh = async (cmd, label, ph) => {
+  const prompt = `Run exactly this command and return its complete output verbatim — plain text, no code fences, no commentary:\n{ ${cmd} ; } ; echo "SH_RC=$?"`
+  const raw = await agent(prompt, { model: 'haiku', effort: 'low', label, phase: ph })
+  if (raw === null || raw === undefined) throw new Error(`${label}: command agent was skipped or died`)
+  const out = raw.split('\n').filter(l => !/^\s*`{3,}/.test(l)).join('\n')
+  const marks = [...out.matchAll(/SH_RC=(\d+)/g)]
+  if (!marks.length) throw new Error(`${label}: no exit-status marker in command output: ${out.trim().slice(-300)}`)
+  const m = marks[marks.length - 1]
+  // A nonzero exit is the command's own verdict, not relay flakiness — never retried.
+  if (m[1] !== '0') throw new Error(`${label}: command exited ${m[1]}: ${out.slice(0, m.index).trim().slice(-300)}`)
+  return out.slice(0, m.index).trim()
 }
 
 // sh() trims trailing text after the exit marker but keeps leading relay
@@ -214,39 +205,32 @@ const block = (id, reason) => {
   log(`${id} blocked: ${reason}`)
 }
 
-// One review pass: run the SDK runner (it assembles the prompt from the static
-// template beside it, writes the artifact, and archives the round), gate on
-// its exit status (exit 0 iff the review completed with valid structured
-// output and a non-empty artifact — the WRAPPER_RC echo survives the haiku
-// round-trip where a long transcript might not), then take the counts from the
-// runner's single machine-readable completion line. The counts are computed by
-// the script from typed findings JSON, never a model's reading of the artifact.
-const review = async (id, worktree, round, ownedFiles = []) => {
-  const artifact = `${runDir}/reviews/${id}-codex.md`
-  // longRunning: the runner's retries can total over an hour (4 × 15-minute
-  // attempts plus backoff) — a foreground Bash call would be killed at 10min.
-  const out = await withReviewSlot(() =>
-    sh(`"${reviewScript}" "${runDir}" "${worktree}" "${id}" ${round}` +
-       `${ownedFiles.map(f => ` '${sq(f)}'`).join('')} 2>/dev/null; echo "WRAPPER_RC=$?"`,
-       `review:${id}#${round}`, 'Review', { longRunning: true }))
-  if (!out.includes('WRAPPER_RC=0'))
-    throw new Error(`Codex review did not complete: ${out.trim().slice(-200)}`)
-  // rc 0 guarantees the runner printed COMPLETED with its counts, but the
-  // relay can lose or paraphrase that one line. The findings JSON the runner
-  // wrote holds the same numbers — recover them deterministically before
-  // failing a validly reviewed item.
-  let counts = out.match(/CODEX_REVIEW: COMPLETED total=(\d+) critical_high=(\d+)/)
-  if (!counts) {
-    const rec = await sh(
-      `node -e 'const f = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).findings; ` +
-      `console.log("RECOVERED_COUNTS total=" + f.length + " critical_high=" + ` +
-      `f.filter(x => x.severity === "Critical" || x.severity === "High").length)' "${artifact}.json"`,
-      `review-counts:${id}#${round}`, 'Review')
-    counts = rec.match(/RECOVERED_COUNTS total=(\d+) critical_high=(\d+)/)
-    if (!counts)
-      throw new Error(`review completed but its counts could not be recovered: ${rec.trim().slice(-200)}`)
+// One review pass: a single orchestrify-review agent drives Codex through the
+// project-registered codex MCP server (its own definition carries the review
+// template and the retry rules for transient failures and timeouts), parses
+// the result, writes the findings JSON verbatim to the artifact and the round
+// archive, counts the findings it wrote, and returns the counts via schema.
+// written=false — a dead tool call, an unparseable payload — always lands in
+// this retry loop, never in the merge gate; only written=true carries counts.
+// Two workflow-level attempts on top of the agent's internal tool-call
+// retries keeps overall resilience at the old SDK runner's level.
+const review = async (id, worktree, round, mode, ownedFiles = []) => {
+  const artifact = `${runDir}/reviews/${id}-codex.json`
+  const archive = `${runDir}/reviews/${id}-codex.round${round}.json`
+  let lastReason
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    const r = await withReviewSlot(() => agent(
+      [`Worktree: ${worktree}`, `Run directory: ${runDir}`, `Item: ${id}`, `Mode: ${mode}`,
+       `Artifact path: ${artifact}`, `Round archive path: ${archive}`,
+       mode === 'item' ? `Owned files: ${ownedFiles.join(', ') || 'the files its plan names'}` : '']
+        .filter(Boolean).join('\n'),
+      { agentType: 'orchestrify-review', schema: REVIEW,
+        label: `review:${id}#${round}${attempt > 1 ? '~retry' : ''}`, phase: 'Review' }))
+    if (r === null || r === undefined) { lastReason = 'review agent was skipped or died'; continue }
+    if (!r.written) { lastReason = r.reason || 'review agent reported written=false with no reason'; continue }
+    return { total: r.total, criticalOrHigh: r.criticalHigh }
   }
-  return { total: Number(counts[1]), criticalOrHigh: Number(counts[2]) }
+  throw new Error(`Codex review did not complete: ${lastReason}`)
 }
 
 const planItem = i => agent(
@@ -351,14 +335,14 @@ const buildItem = async item => {
 
   // Review → fix → re-review, max 2 fix rounds, gate on Critical/High (SKILL: bounded loops).
   // A first review with no findings at all has nothing to fix and skips the loop.
-  const first = await review(item.id, wt, 0, item.files)
+  const first = await review(item.id, wt, 0, 'item', item.files)
   if (first.total > 0) {
     for (let round = 1; ; round++) {
       must(await agent(
         [`Worktree: ${wt}`, `Run directory: ${runDir}`, `Item: ${item.id} — ${item.title}`].join('\n'),
         { agentType: 'orchestrify-fix', label: `fix:${item.id}#${round}`, phase: 'Review' }),
         `fix:${item.id}#${round}`)
-      const verdict = await review(item.id, wt, round, item.files)
+      const verdict = await review(item.id, wt, round, 'item', item.files)
       if (verdict.criticalOrHigh === 0) break
       if (round === 2) throw specRooted('fix rounds exhausted with Critical/High findings remaining')
     }
@@ -672,7 +656,7 @@ if (shipped.length) {
     // One review-fix pass over the fixes (SKILL Step 4 tail). A failed review is recorded
     // as a gap — never a reason to leave the fixes sitting uncommitted.
     try {
-      const verdict = await review('integration', integrationWt, 0)
+      const verdict = await review('integration', integrationWt, 0, 'integration')
       if (verdict.total > 0)
         must(await agent(
           [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,

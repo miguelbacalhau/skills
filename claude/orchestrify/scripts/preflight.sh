@@ -36,30 +36,58 @@ else
   echo "TRUNK_CANDIDATE: ${trunk:-unknown}"
 fi
 
-# --- CODEX: the cross-model reviewer used by stage 4c runs on the Codex SDK ---
-# The script is documented as "run from the project root", so it locates its own
-# scripts/ directory from $BASH_SOURCE (pwd -P resolves the install symlink),
-# never from the cwd. The SDK vendors a codex binary into node_modules, so auth
-# is checked against that one; a global codex is only a fallback.
+# --- CODEX: the cross-model reviewer runs through the GLOBAL codex binary's ---
+# --- MCP server, registered per project (initify writes the registration)  ---
+# Codex is never installed via npm — the only supported codex is the system
+# install on PATH (official non-npm distribution: Homebrew or the release
+# binaries). The gate checks: binary on PATH at >= the minimum version that
+# this skill's MCP usage was verified against, valid auth, the codex server
+# registered in ./.mcp.json, that server enabled for the project, and the
+# MCP_TOOL_TIMEOUT env knob set. The JSON checks are greps — necessary, not
+# sufficient — and nothing here can check what is LOADED in the current
+# session: MCP servers and settings env load at session start, so settings
+# written minutes ago pass these gates while the session still lacks the
+# tool. The live check (does the codex MCP tool resolve?) is SKILL.md Step
+# 1's job, in the session itself.
 scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
-node_major=""
-if command -v node >/dev/null 2>&1; then
-  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
-fi
-if [[ -z "$node_major" || "$node_major" -lt 18 ]]; then
-  echo "CODEX: FAIL: node >= 18 required for the Codex SDK review runner"
+codex_min_version="0.142.5"
+settings_files=("./.claude/settings.local.json" "./.claude/settings.json")
+codex_fail() {
+  echo "CODEX: FAIL: $1"
   fail=1
-elif [[ ! -d "$scripts_dir/node_modules/@openai/codex-sdk" ]]; then
-  echo "CODEX: FAIL: Codex SDK not installed — run 'npm install' in $scripts_dir (or rerun initify)"
-  fail=1
+}
+if ! command -v codex >/dev/null 2>&1; then
+  codex_fail "codex not on PATH — install the Codex CLI from its official non-npm distribution (e.g. 'brew install codex'), never via npm"
 else
-  codex_bin="$scripts_dir/node_modules/.bin/codex"
-  [[ -x "$codex_bin" ]] || codex_bin="$(command -v codex || true)"
-  if [[ -z "$codex_bin" ]] || ! "$codex_bin" login status >/dev/null 2>&1 </dev/null; then
-    echo "CODEX: FAIL: not authenticated — run '$scripts_dir/node_modules/.bin/codex login'"
-    fail=1
+  codex_version="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  oldest="$(printf '%s\n%s\n' "$codex_min_version" "${codex_version:-0}" | sort -V | head -1)"
+  if [[ -z "$codex_version" || "$oldest" != "$codex_min_version" ]]; then
+    codex_fail "codex ${codex_version:-unknown} < required $codex_min_version — upgrade the system codex (never via npm)"
+  elif ! codex login status >/dev/null 2>&1 </dev/null; then
+    codex_fail "not authenticated — run 'codex login'"
+  elif [[ ! -f "./.mcp.json" ]] || ! grep -qE '"codex"[[:space:]]*:' "./.mcp.json"; then
+    codex_fail "no codex server entry in ./.mcp.json — run initify to register the codex MCP server"
   else
-    echo "CODEX: PASS"
+    enabled=0
+    timeout_set=0
+    for sf in "${settings_files[@]}"; do
+      [[ -f "$sf" ]] || continue
+      flat="$(tr -d '\n' < "$sf")"
+      if grep -qE '"enableAllProjectMcpServers"[[:space:]]*:[[:space:]]*true' <<<"$flat" ||
+         grep -qE '"enabledMcpjsonServers"[[:space:]]*:[[:space:]]*\[[^]]*"codex"' <<<"$flat"; then
+        enabled=1
+      fi
+      if grep -q '"MCP_TOOL_TIMEOUT"' <<<"$flat"; then
+        timeout_set=1
+      fi
+    done
+    if [[ "$enabled" -eq 0 ]]; then
+      codex_fail "codex server not enabled — add \"codex\" to enabledMcpjsonServers in ./.claude/settings.local.json (initify writes this), then start a fresh session"
+    elif [[ "$timeout_set" -eq 0 ]]; then
+      codex_fail "MCP_TOOL_TIMEOUT not set in the settings env block — initify writes it (~20 minutes); reviews would be killed at the default tool timeout"
+    else
+      echo "CODEX: PASS"
+    fi
   fi
 fi
 
