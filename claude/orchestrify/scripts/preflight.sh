@@ -36,33 +36,52 @@ else
   echo "TRUNK_CANDIDATE: ${trunk:-unknown}"
 fi
 
-# --- CODEX: cross-model reviewer used by stage 4c must be installed + authed ---
-if ! command -v codex >/dev/null 2>&1; then
-  echo "CODEX: FAIL: codex CLI not found — npm i -g @openai/codex"
+# --- CODEX: the cross-model reviewer used by stage 4c runs on the Codex SDK ---
+# The script is documented as "run from the project root", so it locates its own
+# scripts/ directory from $BASH_SOURCE (pwd -P resolves the install symlink),
+# never from the cwd. The SDK vendors a codex binary into node_modules, so auth
+# is checked against that one; a global codex is only a fallback.
+scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd -P)"
+node_major=""
+if command -v node >/dev/null 2>&1; then
+  node_major="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || true)"
+fi
+if [[ -z "$node_major" || "$node_major" -lt 18 ]]; then
+  echo "CODEX: FAIL: node >= 18 required for the Codex SDK review runner"
   fail=1
-elif ! codex login status >/dev/null 2>&1 </dev/null; then
-  echo "CODEX: FAIL: not authenticated — run 'codex login'"
+elif [[ ! -d "$scripts_dir/node_modules/@openai/codex-sdk" ]]; then
+  echo "CODEX: FAIL: Codex SDK not installed — run 'npm install' in $scripts_dir (or rerun initify)"
   fail=1
 else
-  echo "CODEX: PASS"
+  codex_bin="$scripts_dir/node_modules/.bin/codex"
+  [[ -x "$codex_bin" ]] || codex_bin="$(command -v codex || true)"
+  if [[ -z "$codex_bin" ]] || ! "$codex_bin" login status >/dev/null 2>&1 </dev/null; then
+    echo "CODEX: FAIL: not authenticated — run '$scripts_dir/node_modules/.bin/codex login'"
+    fail=1
+  else
+    echo "CODEX: PASS"
+  fi
 fi
 
-# --- TIMEOUT: stage 4c bounds each Codex review with GNU timeout/gtimeout ---
-if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-  echo "TIMEOUT: PASS"
-else
-  echo "TIMEOUT: FAIL: no timeout/gtimeout for the Codex review bound — 'brew install coreutils' on macOS"
-  fail=1
-fi
-
-# --- AGENTS: the seven subagent definitions must be installed for the harness ---
+# --- AGENTS: every subagent definition bundled with this skill must be installed ---
+# Enumerate the skill's own agents/ directory rather than a hardcoded name
+# list: a list here goes stale the moment an agent is added or renamed, and a
+# stale PASS fails deep inside the work loop instead of at the gate.
+agents_src="$scripts_dir/../agents"
 missing=""
-for name in spec plan implement fix commit merge integrate; do
-  if [[ ! -e "$HOME/.claude/agents/orchestrify-$name.md" && ! -e "./.claude/agents/orchestrify-$name.md" ]]; then
-    missing="$missing $name"
+found_any=0
+for def in "$agents_src"/*.md; do
+  [[ -e "$def" ]] || continue
+  found_any=1
+  agent_md="$(basename "$def")"
+  if [[ ! -e "$HOME/.claude/agents/$agent_md" && ! -e "./.claude/agents/$agent_md" ]]; then
+    missing="$missing ${agent_md%.md}"
   fi
 done
-if [[ -n "$missing" ]]; then
+if [[ "$found_any" -eq 0 ]]; then
+  echo "AGENTS: FAIL: no agent definitions found at $agents_src — reinstall the skill"
+  fail=1
+elif [[ -n "$missing" ]]; then
   echo "AGENTS: FAIL: missing definitions:$missing — re-run install-claude-skills.sh"
   fail=1
 else

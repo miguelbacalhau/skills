@@ -15,7 +15,8 @@ Three skills take a feature from rough idea to a committed integration branch:
    from execution, so the conversation can take as many rounds as it needs.
 2. **initify** — one-time, consent-per-step setup that makes a repository pass
    orchestrify's pre-flight: the bare-repo-with-worktrees layout, the
-   cross-model reviewer CLI, GNU timeout, and the bundled subagent
+   cross-model reviewer (the vendored Codex SDK for Claude Code runs; the
+   Claude CLI plus GNU timeout for Codex runs), and the bundled subagent
    definitions.
 3. **orchestrify** — the autonomous run. It discovers the brief, confirms it
    once, writes a spec with a dependency-ordered work breakdown, then executes

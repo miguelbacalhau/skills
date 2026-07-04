@@ -1,0 +1,12 @@
+{
+  "name": "orchestrify-scripts",
+  "private": true,
+  "type": "module",
+  "description": "Runtime dependencies for orchestrify's bundled scripts (codex-review.mjs)",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@openai/codex-sdk": "0.142.5"
+  }
+}

@@ -1,6 +1,6 @@
 ---
 name: initify
-description: Set up a repository to satisfy orchestrify's pre-flight — the bare-repo-with-worktrees layout with a default-branch worktree, the Codex reviewer, GNU timeout, and the installed subagent definitions. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orchestrify runs, or when orchestrify's pre-flight failed and they want the gates fixed. Interactive and consent-per-step — it restructures repositories and installs tools, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
+description: Set up a repository to satisfy orchestrify's pre-flight — the bare-repo-with-worktrees layout with a default-branch worktree, the Codex SDK reviewer, and the installed subagent definitions. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orchestrify runs, or when orchestrify's pre-flight failed and they want the gates fixed. Interactive and consent-per-step — it restructures repositories and installs tools, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
 args: <path or clone URL, optional>
 user-invocable: true
 ---
@@ -106,8 +106,7 @@ Nothing in this touches history, refs, remotes, or config beyond `core.bare` —
 
 Fix only the gates the pre-flight flagged, each with consent:
 
-- **Codex CLI** — install: `npm i -g @openai/codex`. Authentication is interactive and must be the user's own action: suggest they run `! codex login` in this session, then re-check with `codex login status`.
-- **GNU timeout** — on macOS: `brew install coreutils` (provides `gtimeout`). Linux ships `timeout` with coreutils already.
+- **Codex SDK** — requires Node ≥ 18 (`node --version`; installing Node is the user's action if it is missing). Install by running `npm install` in the orchestrify skill's `scripts/` directory — it installs the SDK and a vendored codex binary, so no global install is needed. Authentication is interactive and must be the user's own action: suggest they run `! <scripts>/node_modules/.bin/codex login` in this session, then re-check with `! <scripts>/node_modules/.bin/codex login status`.
 - **Subagent definitions** — the seven `orchestrify-*` agents must be linked into `~/.claude/agents/`. Run `install-claude-skills.sh` from the skills repository that provided this skill. Note that a fresh session may be needed before the harness picks them up.
 
 Optionally — offer, never default: for a repo where orchestrify runs are always unattended, write `"permissions": { "defaultMode": "bypassPermissions" }` into `<repo-root>/<branch>/.claude/settings.local.json`. State the tradeoff plainly: it disables the approval gate for every session opened in that worktree, not just orchestrify runs. Declining is fine — the mode can be toggled per session with Shift+Tab instead.

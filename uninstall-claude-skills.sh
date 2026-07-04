@@ -129,31 +129,36 @@ for skill_dir in "${skill_dirs[@]}"; do
 done
 
 # Remove any bundled subagent links this repo installed into the agents directory.
+# The length guard matters on bash 3.2 (stock macOS): expanding an empty array
+# with `set -u` is an "unbound variable" error there, which would abort the
+# script before the dangling-link sweep below.
 agent_files=("$source_dir"/*/agents/*.md)
 
-for agent_file in "${agent_files[@]}"; do
-  [[ -f "$agent_file" ]] || continue
+if [[ ${#agent_files[@]} -gt 0 ]]; then
+  for agent_file in "${agent_files[@]}"; do
+    [[ -f "$agent_file" ]] || continue
 
-  agent_name="$(basename "$agent_file")"
-  agent_link="$agents_target_dir/$agent_name"
+    agent_name="$(basename "$agent_file")"
+    agent_link="$agents_target_dir/$agent_name"
 
-  if same_link_target "$agent_link" "$agent_file"; then
-    run rm "$agent_link"
-    removed_count=$((removed_count + 1))
-    if [[ "$dry_run" == true ]]; then
-      echo "would remove agent: $agent_link"
-    else
-      echo "removed agent: $agent_link"
+    if same_link_target "$agent_link" "$agent_file"; then
+      run rm "$agent_link"
+      removed_count=$((removed_count + 1))
+      if [[ "$dry_run" == true ]]; then
+        echo "would remove agent: $agent_link"
+      else
+        echo "removed agent: $agent_link"
+      fi
+      continue
     fi
-    continue
-  fi
 
-  if [[ -e "$agent_link" || -L "$agent_link" ]]; then
-    echo "skip: $agent_link does not point to $agent_file" >&2
-  else
-    echo "ok: agent $agent_name is not installed"
-  fi
-done
+    if [[ -e "$agent_link" || -L "$agent_link" ]]; then
+      echo "skip: $agent_link does not point to $agent_file" >&2
+    else
+      echo "ok: agent $agent_name is not installed"
+    fi
+  done
+fi
 
 # Sweep dangling links that still point into this repo: a skill or agent
 # removed from the repo is no longer enumerated by the loops above, but its

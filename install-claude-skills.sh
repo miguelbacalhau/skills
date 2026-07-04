@@ -11,6 +11,12 @@ A skill may bundle subagent definitions in an `agents/` subdirectory
 (e.g. claude/orchestrify/agents/*.md). Those files are also symlinked
 into the Claude agents directory so the harness can load them.
 
+A skill may also declare script dependencies in `scripts/package.json`
+(e.g. claude/orchestrify/scripts). Those are installed with `npm install`
+so the linked skill works without a separate setup step; node_modules
+lands in the repo, and the directory-level skill symlink means the
+installed skill resolves it too.
+
 Options:
   --target DIR          Install skill links into DIR instead of $HOME/.claude/skills
   --agents-target DIR   Install agent links into DIR instead of $HOME/.claude/agents
@@ -172,3 +178,34 @@ if [[ ${#agent_files[@]} -gt 0 ]]; then
     fi
   done
 fi
+
+# Install any bundled script dependencies (claude/<skill>/scripts/package.json).
+# Runs as its own pass so skills that were already linked above still get their
+# dependencies. A failure here must not roll back the linking that already
+# happened — it is reported and reflected in the exit code instead.
+deps_failed=0
+for pkg in "$source_dir"/*/scripts/package.json; do
+  [[ -f "$pkg" ]] || continue
+
+  scripts_dir="$(dirname "$pkg")"
+
+  if ! command -v npm >/dev/null 2>&1; then
+    echo "warn: npm not found — install Node >= 18, then run: npm install --prefix $scripts_dir" >&2
+    deps_failed=1
+    continue
+  fi
+
+  if [[ "$dry_run" == true ]]; then
+    echo "would install dependencies: $scripts_dir"
+    continue
+  fi
+
+  if (cd "$scripts_dir" && npm install --no-fund --no-audit --loglevel=error); then
+    echo "installed dependencies: $scripts_dir"
+  else
+    echo "warn: npm install failed in $scripts_dir — its skill's scripts will not run until it succeeds" >&2
+    deps_failed=1
+  fi
+done
+
+exit "$deps_failed"

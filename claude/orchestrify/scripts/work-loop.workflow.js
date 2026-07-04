@@ -17,7 +17,7 @@
 //   repoRoot          parent of the bare repo; all worktrees live here
 //   slug              run slug; integration worktree is <repoRoot>/orchestrify-<slug>
 //   integrationBranch orchestrify/<slug>
-//   reviewScript      absolute path to this skill's codex-review.sh
+//   reviewScript      absolute path to this skill's codex-review.mjs
 //   items             [{ id, title, deps: [ids], files: [paths] }] from the Work Breakdown
 // }
 //
@@ -41,9 +41,7 @@ const { runDir, repoRoot, slug, integrationBranch, reviewScript, items } = args
 const integrationWt = `${repoRoot}/orchestrify-${slug}`
 
 // ---------- structured-output schemas ----------
-const VERDICT = { type: 'object', additionalProperties: false, required: ['total', 'criticalOrHigh'],
-  properties: { total: { type: 'number' }, criticalOrHigh: { type: 'number' } } }
-const MERGE = { type: 'object', additionalProperties: false, required: ['merged', 'detail'],
+const MERGE ={ type: 'object', additionalProperties: false, required: ['merged', 'detail'],
   properties: { merged: { type: 'boolean' }, detail: { type: 'string' } } }
 const RECONCILE = { type: 'object', additionalProperties: false, required: ['clean', 'issues'],
   properties: { clean: { type: 'boolean' }, issues: { type: 'array', items: { type: 'string' } } } }
@@ -102,6 +100,25 @@ const sh = async (cmd, label, ph, opts = {}) => {
   return out.slice(0, m.index).trim()
 }
 
+// sh() trims trailing text after the exit marker but keeps leading relay
+// commentary. Any output that gets parsed (hashes) or attribution-checked
+// (commit messages) must come from between explicit markers, never the raw
+// transcript — a stray "Claude" in relay preamble would trip the banned regex
+// against a clean commit. Marker lines are matched whole, so the echoed
+// command text (where the markers appear quoted) can never match.
+const shMarked = async (cmd, label, ph) => {
+  const out = await sh(`echo "@@OUT@@" ; { ${cmd} ; } ; echo "@@OUT_END@@"`, label, ph)
+  const lines = out.split('\n')
+  const a = lines.findIndex(l => l.trim() === '@@OUT@@')
+  const b = lines.map(l => l.trim()).lastIndexOf('@@OUT_END@@')
+  if (a === -1 || b <= a)
+    throw new Error(`${label}: output markers did not survive the relay: ${out.trim().slice(-300)}`)
+  return lines.slice(a + 1, b).join('\n')
+}
+
+// Single-quote a value into a relayed shell command.
+const sq = s => s.replace(/'/g, `'\\''`)
+
 // Codex reviews contend for one Codex auth — cap concurrency at 2 (SKILL: review throttling).
 const reviewSlots = { free: 2, queue: [] }
 const withReviewSlot = async fn => {
@@ -145,23 +162,39 @@ const block = (id, reason) => {
   log(`${id} blocked: ${reason}`)
 }
 
-// One review pass: run the wrapper, gate on its exit status (exit 0 iff the
-// artifact is non-empty — the WRAPPER_RC echo survives the haiku round-trip
-// where a long transcript might not), archive the round, then count findings.
+// One review pass: run the SDK runner, gate on its exit status (exit 0 iff the
+// review completed with valid structured output and a non-empty artifact — the
+// WRAPPER_RC echo survives the haiku round-trip where a long transcript might
+// not), archive the round, then take the counts from the runner's single
+// machine-readable completion line. The counts are computed by the script from
+// typed findings JSON, never a model's reading of the artifact.
 const review = async (id, worktree, round) => {
   const artifact = `${runDir}/reviews/${id}-codex.md`
-  // longRunning: the wrapper's retries can total over an hour (4 × 15-minute
+  // longRunning: the runner's retries can total over an hour (4 × 15-minute
   // attempts plus backoff) — a foreground Bash call would be killed at 10min.
   const out = await withReviewSlot(() =>
     sh(`"${reviewScript}" "${worktree}" "${artifact}" "${runDir}/reviews/${id}-prompt.md" 2>/dev/null; rc=$?; ` +
-       `if [ "$rc" -eq 0 ]; then cp "${artifact}" "${runDir}/reviews/${id}-codex.round${round}.md"; fi; echo "WRAPPER_RC=$rc"`,
+       `if [ "$rc" -eq 0 ]; then cp "${artifact}" "${runDir}/reviews/${id}-codex.round${round}.md"; ` +
+       `cp "${artifact}.json" "${runDir}/reviews/${id}-codex.round${round}.json"; fi; echo "WRAPPER_RC=$rc"`,
        `review:${id}#${round}`, 'Review', { longRunning: true }))
   if (!out.includes('WRAPPER_RC=0'))
     throw new Error(`Codex review did not complete: ${out.trim().slice(-200)}`)
-  return must(await agent(
-    `Read ${artifact} and report two counts: the total number of findings, and how many of them have severity Critical or High. If it reports no findings, both counts are 0.`,
-    { model: 'haiku', effort: 'low', label: `verdict:${id}#${round}`, phase: 'Review', schema: VERDICT }),
-    `verdict:${id}#${round}`)
+  // rc 0 guarantees the runner printed COMPLETED with its counts, but the
+  // relay can lose or paraphrase that one line. The findings JSON the runner
+  // wrote holds the same numbers — recover them deterministically before
+  // failing a validly reviewed item.
+  let counts = out.match(/CODEX_REVIEW: COMPLETED total=(\d+) critical_high=(\d+)/)
+  if (!counts) {
+    const rec = await sh(
+      `node -e 'const f = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).findings; ` +
+      `console.log("RECOVERED_COUNTS total=" + f.length + " critical_high=" + ` +
+      `f.filter(x => x.severity === "Critical" || x.severity === "High").length)' "${artifact}.json"`,
+      `review-counts:${id}#${round}`, 'Review')
+    counts = rec.match(/RECOVERED_COUNTS total=(\d+) critical_high=(\d+)/)
+    if (!counts)
+      throw new Error(`review completed but its counts could not be recovered: ${rec.trim().slice(-200)}`)
+  }
+  return { total: Number(counts[1]), criticalOrHigh: Number(counts[2]) }
 }
 
 const planItem = i => agent(
@@ -184,13 +217,13 @@ const banned = /claude|anthropic|co-authored-by|generated (with|by)/i
 // banned trailer beneath it. One command returns both the tip message (the
 // value reported for the item) and the whole span's messages (what is checked).
 const tipAndSpan = async (wt, range, label) => {
-  const out = await sh(
+  const out = await shMarked(
     `git -C "${wt}" log -1 --format=%B ; echo "@@SPAN@@" ; git -C "${wt}" log --format=%B "${range}"`,
     label, 'Merge')
   return { tip: out.split('@@SPAN@@')[0].trim(), clean: !banned.test(out) }
 }
 const commitItem = async (wt, id, title, extraLines = []) => {
-  const head = async tag => (await sh(`git -C "${wt}" rev-parse HEAD`, `head:${id}#${tag}`, 'Merge')).trim()
+  const head = async tag => (await shMarked(`git -C "${wt}" rev-parse HEAD`, `head:${id}#${tag}`, 'Merge')).trim()
   const base = await head('base')
   for (let attempt = 1; attempt <= 2; attempt++) {
     must(await agent(
@@ -223,7 +256,7 @@ const commitItem = async (wt, id, title, extraLines = []) => {
   const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
   // reset + fresh commit, not --amend: the banned marker may sit in a commit
   // below the tip, and an amend rewrites only HEAD.
-  await sh(`git -C "${wt}" reset --soft ${base} && git -C "${wt}" commit -m '${fallback.replace(/'/g, `'\\''`)}'`,
+  await sh(`git -C "${wt}" reset --soft ${base} && git -C "${wt}" commit -m '${sq(fallback)}'`,
            `rewrite:${id}`, 'Merge')
   return { hash: await head('rewrite'), message: fallback }
 }
@@ -284,8 +317,11 @@ const buildItem = async item => {
   const merge = await serializedMerge(async () => {
     // Self-heal before merging: a predecessor that died mid-conflict must not
     // leave the integration worktree in MERGING state for everyone after it.
-    await sh(`git -C "${integrationWt}" merge --abort 2>/dev/null || true`, `merge-reset:${item.id}`, 'Merge')
-    const tipBefore = (await sh(`git -C "${integrationWt}" rev-parse HEAD`, `merge-tip:${item.id}`, 'Merge')).trim()
+    // One command with the tip read — this section is the run's serial
+    // bottleneck, so every relay round-trip here is paid by every item.
+    const tipBefore = (await shMarked(
+      `git -C "${integrationWt}" merge --abort >/dev/null 2>&1 || true ; git -C "${integrationWt}" rev-parse HEAD`,
+      `merge-reset:${item.id}`, 'Merge')).trim()
     const m = must(await agent(
       [`Integration worktree: ${integrationWt}`, `Run directory: ${runDir}`,
        `Item: ${item.id} — ${item.title}`,
@@ -297,29 +333,30 @@ const buildItem = async item => {
     // section (an amend must never rewrite a commit a later merge builds on),
     // and only on commits this merge created (tip moved), never pre-run history.
     if (m.merged) {
-      const tipAfter = (await sh(`git -C "${integrationWt}" rev-parse HEAD`, `merge-tip2:${item.id}`, 'Merge')).trim()
-      if (tipAfter !== tipBefore) {
-        // --first-parent: only the commits the merge agent itself created on
-        // the integration branch — the item-branch commits it merged in were
-        // already checked by commitItem and cannot be rewritten from here.
-        const msgs = await sh(`git -C "${integrationWt}" log --first-parent --format=%B "${tipBefore}..HEAD"`,
-                              `merge-messages:${item.id}`, 'Merge')
-        if (banned.test(msgs)) {
-          const safe = banned.test(item.title) ? `merge work item ${item.id}` : `merge ${item.id}: ${item.title}`
-          const belowTip = await sh(
-            `git -C "${integrationWt}" log --first-parent --skip=1 --format=%B "${tipBefore}..HEAD"`,
-            `merge-below-tip:${item.id}`, 'Merge')
-          if (!banned.test(belowTip)) {
-            // Only the tip is banned — amend keeps the merge parents intact.
-            await sh(`git -C "${integrationWt}" commit --amend -m '${safe.replace(/'/g, `'\\''`)}'`, `merge-amend:${item.id}`, 'Merge')
-          } else {
-            // A banned message below the tip (a post-merge fix commit sits on
-            // top of it) cannot be amended away. Squash the span into one
-            // clean commit: content and the attribution guarantee are kept,
-            // only the merge topology is given up.
-            await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${safe.replace(/'/g, `'\\''`)}'`,
-                     `merge-squash:${item.id}`, 'Merge')
-          }
+      // --first-parent: only the commits the merge agent itself created on
+      // the integration branch — the item-branch commits it merged in were
+      // already checked by commitItem and cannot be rewritten from here.
+      // Tip and messages in one command; an unmoved tip yields an empty span.
+      const post = await shMarked(
+        `git -C "${integrationWt}" rev-parse HEAD ; echo "@@SPAN@@" ; ` +
+        `git -C "${integrationWt}" log --first-parent --format=%B "${tipBefore}..HEAD"`,
+        `merge-check:${item.id}`, 'Merge')
+      const [tipAfter, msgs] = post.split('@@SPAN@@').map(s => (s || '').trim())
+      if (tipAfter !== tipBefore && banned.test(msgs)) {
+        const safe = banned.test(item.title) ? `merge work item ${item.id}` : `merge ${item.id}: ${item.title}`
+        const belowTip = await shMarked(
+          `git -C "${integrationWt}" log --first-parent --skip=1 --format=%B "${tipBefore}..HEAD"`,
+          `merge-below-tip:${item.id}`, 'Merge')
+        if (!banned.test(belowTip)) {
+          // Only the tip is banned — amend keeps the merge parents intact.
+          await sh(`git -C "${integrationWt}" commit --amend -m '${sq(safe)}'`, `merge-amend:${item.id}`, 'Merge')
+        } else {
+          // A banned message below the tip (a post-merge fix commit sits on
+          // top of it) cannot be amended away. Squash the span into one
+          // clean commit: content and the attribution guarantee are kept,
+          // only the merge topology is given up.
+          await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${sq(safe)}'`,
+                   `merge-squash:${item.id}`, 'Merge')
         }
       }
     }
