@@ -37,7 +37,32 @@ export const meta = {
   ],
 }
 
-const { runDir, repoRoot, slug, integrationBranch, reviewScript, items } = args
+// A launcher that JSON-encodes args delivers one big string here, every
+// destructured field reads undefined, and the crash surfaces deep in the
+// scheduler ("undefined is not an object (evaluating 'items.map')"). Recover
+// the stringified case, then fail fast — at launch, not mid-run — on anything
+// still missing or mis-shaped.
+let parsedArgs = args
+if (typeof parsedArgs === 'string') {
+  try { parsedArgs = JSON.parse(parsedArgs) }
+  catch { throw new Error('args arrived as a string that is not valid JSON — pass args as a real JSON object') }
+}
+if (typeof parsedArgs !== 'object' || parsedArgs === null)
+  throw new Error(`args must be a JSON object (got ${JSON.stringify(args)}) — pass it as a real object, not a JSON-encoded string`)
+const { runDir, repoRoot, slug, integrationBranch, reviewScript } = parsedArgs
+let items = parsedArgs.items
+if (typeof items === 'string') {
+  try { items = JSON.parse(items) } catch { /* fall through to the array check */ }
+}
+for (const [k, v] of Object.entries({ runDir, repoRoot, slug, integrationBranch, reviewScript }))
+  if (typeof v !== 'string' || !v)
+    throw new Error(`args.${k} must be a non-empty string (got ${JSON.stringify(v)})`)
+if (!Array.isArray(items) || items.length === 0)
+  throw new Error(`args.items must be a non-empty array of work items (got ${JSON.stringify(items)})`)
+const badItems = items.filter(i => !i || typeof i.id !== 'string' || typeof i.title !== 'string' ||
+  !Array.isArray(i.deps) || !Array.isArray(i.files))
+if (badItems.length)
+  throw new Error(`malformed work items (need string id, string title, array deps, array files): ${JSON.stringify(badItems)}`)
 const integrationWt = `${repoRoot}/orchestrify-${slug}`
 
 // ---------- structured-output schemas ----------

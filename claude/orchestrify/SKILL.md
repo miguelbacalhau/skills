@@ -187,7 +187,7 @@ Workflow({
 })
 ```
 
-Pass `items` as a real JSON array, never a stringified one. Persist the `runId` from the tool result immediately: append a `**Workflow run:** <runId>` line to the end of `spec.md`. It is the resume handle, and the interruption that needs it — session death — also erases the conversation, the only other place it would exist.
+Pass `args` — and `items` inside it — as real JSON values, never stringified. The script recovers a stringified `args` or `items` by parsing it, and otherwise fails fast at launch naming the bad field; on such a failure, fix this Workflow call and relaunch — do not wrap the script in another workflow. Persist the `runId` from the tool result immediately: append a `**Workflow run:** <runId>` line to the end of `spec.md`. It is the resume handle, and the interruption that needs it — session death — also erases the conversation, the only other place it would exist.
 
 ### What the workflow does
 
