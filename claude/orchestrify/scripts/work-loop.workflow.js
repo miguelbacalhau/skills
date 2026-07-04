@@ -21,9 +21,10 @@
 //   items             [{ id, title, deps: [ids], files: [paths] }] from the Work Breakdown
 // }
 //
-// Every review prompt file (<runDir>/reviews/<ID>-prompt.md, plus
-// integration-prompt.md) must exist before this workflow starts — the main
-// conversation writes them in Step 4.
+// Review prompts are not inputs: codex-review.mjs assembles each one from the
+// static template shipped next to it (review-prompt.md), substituting only the
+// run directory, plan path, and owned files — nothing has to be written into
+// <runDir>/reviews/ before this workflow starts.
 
 export const meta = {
   name: 'orchestrify-work-loop',
@@ -109,20 +110,46 @@ const must = (result, what) => {
 // here instead of silently reading as success.
 const sh = async (cmd, label, ph, opts = {}) => {
   // longRunning: the agent's Bash tool caps foreground calls at 10 minutes,
-  // so commands that legitimately run longer must go through run_in_background.
-  const raw = await agent(
-    `Run exactly this command and return its complete output verbatim — plain text, no code fences, no commentary:\n{ ${cmd} ; } ; echo "SH_RC=$?"` +
-    (opts.longRunning
-      ? '\nThe command can legitimately run for up to an hour — far past your Bash tool\'s foreground timeout. Launch it with run_in_background: true, do nothing else while it runs, and return the complete output once it exits.'
-      : ''),
-    { model: 'haiku', effort: 'low', label, phase: ph })
-  if (raw === null || raw === undefined) throw new Error(`${label}: command agent was skipped or died`)
-  const out = raw.split('\n').filter(l => !/^\s*`{3,}/.test(l)).join('\n')
-  const marks = [...out.matchAll(/SH_RC=(\d+)/g)]
-  if (!marks.length) throw new Error(`${label}: no exit-status marker in command output: ${out.trim().slice(-300)}`)
-  const m = marks[marks.length - 1]
-  if (m[1] !== '0') throw new Error(`${label}: command exited ${m[1]}: ${out.slice(0, m.index).trim().slice(-300)}`)
-  return out.slice(0, m.index).trim()
+  // so the command itself cannot run in the foreground. But a relay that
+  // parks it with run_in_background and simply ends its turn is broken too:
+  // the turn-ending text ("I'm waiting for the background command…") is
+  // captured as the agent's final result and the marker check fails —
+  // observed twice, and no prompt wording prevents a turn from needing text.
+  // So the wait must itself be a BLOCKING tool call: background the command
+  // into a durable log, then block in the foreground on `tail -f | grep -m1`
+  // in repeatable 10-minute windows (no sleep — the tail exits the moment the
+  // command finishes), then cat the log. The relay never has an idle moment
+  // in which to end its turn.
+  const attempts = opts.longRunning ? 2 : 1
+  let lastErr
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    let prompt, model = 'haiku'
+    if (opts.longRunning) {
+      model = 'sonnet'
+      const logf = `${runDir}/shlogs/${label.replace(/[^A-Za-z0-9._-]/g, '_')}-a${attempt}.log`
+      prompt = [
+        `Execute one long-running command (it may take up to an hour) and return its complete output. Follow these steps exactly, in order:`,
+        `1. Foreground Bash: mkdir -p "${runDir}/shlogs" && : > "${logf}"`,
+        `2. Bash with run_in_background set to true: { ${cmd} ; } >> "${logf}" 2>&1 ; echo "SH_RC=$?" >> "${logf}"`,
+        `3. Foreground Bash with the timeout parameter set to 600000: tail -n +1 -f "${logf}" | grep -m1 "SH_RC="`,
+        `   This call blocks until the command finishes and exits on its own the moment the SH_RC line is written. If it times out or errors, run the exact same call again — as many times as needed. Never end your turn while the command is still running, and never write any interim status text.`,
+        `4. Foreground Bash: cat "${logf}"`,
+        `5. Return the complete file contents verbatim as your final message — plain text, no code fences, no commentary before or after.`,
+      ].join('\n')
+    } else {
+      prompt = `Run exactly this command and return its complete output verbatim — plain text, no code fences, no commentary:\n{ ${cmd} ; } ; echo "SH_RC=$?"`
+    }
+    const raw = await agent(prompt, { model, effort: 'low', label: attempt > 1 ? `${label}~retry` : label, phase: ph })
+    if (raw === null || raw === undefined) { lastErr = new Error(`${label}: command agent was skipped or died`); continue }
+    const out = raw.split('\n').filter(l => !/^\s*`{3,}/.test(l)).join('\n')
+    const marks = [...out.matchAll(/SH_RC=(\d+)/g)]
+    if (!marks.length) { lastErr = new Error(`${label}: no exit-status marker in command output: ${out.trim().slice(-300)}`); continue }
+    const m = marks[marks.length - 1]
+    // A nonzero exit is the command's own verdict, not relay flakiness — never retried.
+    if (m[1] !== '0') throw new Error(`${label}: command exited ${m[1]}: ${out.slice(0, m.index).trim().slice(-300)}`)
+    return out.slice(0, m.index).trim()
+  }
+  throw lastErr
 }
 
 // sh() trims trailing text after the exit marker but keeps leading relay
@@ -187,20 +214,20 @@ const block = (id, reason) => {
   log(`${id} blocked: ${reason}`)
 }
 
-// One review pass: run the SDK runner, gate on its exit status (exit 0 iff the
-// review completed with valid structured output and a non-empty artifact — the
-// WRAPPER_RC echo survives the haiku round-trip where a long transcript might
-// not), archive the round, then take the counts from the runner's single
-// machine-readable completion line. The counts are computed by the script from
-// typed findings JSON, never a model's reading of the artifact.
-const review = async (id, worktree, round) => {
+// One review pass: run the SDK runner (it assembles the prompt from the static
+// template beside it, writes the artifact, and archives the round), gate on
+// its exit status (exit 0 iff the review completed with valid structured
+// output and a non-empty artifact — the WRAPPER_RC echo survives the haiku
+// round-trip where a long transcript might not), then take the counts from the
+// runner's single machine-readable completion line. The counts are computed by
+// the script from typed findings JSON, never a model's reading of the artifact.
+const review = async (id, worktree, round, ownedFiles = []) => {
   const artifact = `${runDir}/reviews/${id}-codex.md`
   // longRunning: the runner's retries can total over an hour (4 × 15-minute
   // attempts plus backoff) — a foreground Bash call would be killed at 10min.
   const out = await withReviewSlot(() =>
-    sh(`"${reviewScript}" "${worktree}" "${artifact}" "${runDir}/reviews/${id}-prompt.md" 2>/dev/null; rc=$?; ` +
-       `if [ "$rc" -eq 0 ]; then cp "${artifact}" "${runDir}/reviews/${id}-codex.round${round}.md"; ` +
-       `cp "${artifact}.json" "${runDir}/reviews/${id}-codex.round${round}.json"; fi; echo "WRAPPER_RC=$rc"`,
+    sh(`"${reviewScript}" "${runDir}" "${worktree}" "${id}" ${round}` +
+       `${ownedFiles.map(f => ` '${sq(f)}'`).join('')} 2>/dev/null; echo "WRAPPER_RC=$?"`,
        `review:${id}#${round}`, 'Review', { longRunning: true }))
   if (!out.includes('WRAPPER_RC=0'))
     throw new Error(`Codex review did not complete: ${out.trim().slice(-200)}`)
@@ -324,14 +351,14 @@ const buildItem = async item => {
 
   // Review → fix → re-review, max 2 fix rounds, gate on Critical/High (SKILL: bounded loops).
   // A first review with no findings at all has nothing to fix and skips the loop.
-  const first = await review(item.id, wt, 0)
+  const first = await review(item.id, wt, 0, item.files)
   if (first.total > 0) {
     for (let round = 1; ; round++) {
       must(await agent(
         [`Worktree: ${wt}`, `Run directory: ${runDir}`, `Item: ${item.id} — ${item.title}`].join('\n'),
         { agentType: 'orchestrify-fix', label: `fix:${item.id}#${round}`, phase: 'Review' }),
         `fix:${item.id}#${round}`)
-      const verdict = await review(item.id, wt, round)
+      const verdict = await review(item.id, wt, round, item.files)
       if (verdict.criticalOrHigh === 0) break
       if (round === 2) throw specRooted('fix rounds exhausted with Critical/High findings remaining')
     }
