@@ -1,6 +1,6 @@
 ---
 name: orchestrify
-description: Drive a feature from idea to committed code using dedicated subagents per stage. Use when Claude should interview the user for the desired outcome, then run fully autonomously, write a spec with a dependency-ordered work breakdown, and for each unblocked work item spawn agents to plan and implement, review with an independent cross-model Codex reviewer and a Claude fix agent, and commit in its own git worktree branched off a shared bare repository, with a merge agent integrating completed items into an integration worktree. Requires a bare-repo-with-worktrees layout (validated up front); there is no privileged main checkout, and the run's deliverable is a branch the user lands themselves. After the interview — plus one optional breakdown checkpoint the user opts into during it — nothing else asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
+description: Drive a feature from idea to committed code using dedicated subagents per stage. Use when Claude should run fully autonomously from a confirmed brief — discover the brief file the briefify skill wrote in `.orchestrify/briefs/`, restate and confirm it once, write a spec with a dependency-ordered work breakdown, and for each unblocked work item spawn agents to plan and implement, review with an independent cross-model Codex reviewer and a Claude fix agent, and commit in its own git worktree branched off a shared bare repository, with a merge agent integrating completed items into an integration worktree. Requires a brief (without one, the skill only points the user at briefify and stops) and a bare-repo-with-worktrees layout (validated up front); there is no privileged main checkout, and the run's deliverable is a branch the user lands themselves. After the opening confirmation — plus one optional breakdown checkpoint the brief opts into — nothing else asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
 args: <idea>
 user-invocable: true
 ---
@@ -11,30 +11,30 @@ Coordinate a full implementation through isolated subagents. The main conversati
 
 Isolation is double: each subagent has its own context window, and each work item has its own git worktree. The repository is a bare repo, and every working copy — the user's, the run's integration tree, and each item — is a peer worktree off that one shared object store. There is no privileged main checkout: the orchestrator never reads or writes the user's worktree, and the run's deliverable is a branch the user lands themselves. Parallel items can never corrupt each other's files — overlap surfaces as an explicit merge conflict, resolved by a dedicated merge agent with both items' plans in hand.
 
-The interview is where the user sets intent. They may also opt into a single checkpoint there: a one-time review of the spec and work breakdown before any code is written. Apart from that opt-in checkpoint, never ask the user anything — no mid-run clarifications, no approval gates, no AskUserQuestion. Status updates are one-way reports. Anything the orchestrator cannot decide within the interview's stated intent becomes a `blocked` item surfaced in the final report.
+The brief is where the user sets intent — written earlier with the briefify skill, discovered on disk, and confirmed once at the start of the run. It may also opt into a single checkpoint: a one-time review of the spec and work breakdown before any code is written. Apart from the opening confirmation and that opt-in checkpoint, never ask the user anything — no mid-run clarifications, no approval gates, no AskUserQuestion. Status updates are one-way reports. Anything the orchestrator cannot decide within the brief's stated intent becomes a `blocked` item surfaced in the final report.
 
 ## Input
 
-The user provides a rough idea, usually by invoking `$orchestrify` with a short objective.
+The run starts from a brief — a captured interview, written earlier by the briefify skill. Orchestrify does not interview: capturing intent well takes an unhurried conversation, and that conversation is briefify's whole job.
 
-If no idea is provided, ask what they want built.
+Check for a waiting brief: list `.orchestrify/briefs/*.md` at the repo root — one `ls`, filenames only, never reading files to decide. The directory's top level holds only unconsumed briefs (its `drafts/` subdirectory does not count), so presence is status.
 
-## Step 1: Elicit requirements
+- **Exactly one brief:** read it and proceed to Step 1.
+- **Several briefs:** present the filenames — the timestamped names identify them — and ask which one this run is for. Read only the chosen one.
+- **None:** stop. Tell the user orchestrify runs from a brief and to run `$briefify` first — suggesting it with any idea they gave, e.g. `$briefify <their idea>` — then invoke `$orchestrify` again. Do not interview as a substitute, and do not run briefify for them: the discussion is theirs to have.
+- **An idea argument alongside a brief:** if it names the same work, fold it into the brief as an amendment at the Step 1 confirmation; if it is unrelated, ask whether to run the brief anyway or take the new idea to briefify first.
 
-Interview the user before writing anything. This is the only chance to capture intent — once it ends, the run is autonomous and every later ambiguity gets resolved against what was said here. Ask about, in one or two compact rounds:
+## Step 1: Confirm the brief
 
-- The desired outcome: what exists when this is done that does not exist now.
-- The features it must have, and explicitly which it must not.
-- Inputs and outputs: what data, events, or user actions go in; what results, side effects, or artifacts come out.
-- Constraints: existing code it must integrate with, performance or compatibility expectations, deadlines on scope.
-- The doubt rule: when the run hits an ambiguity, should it prefer the smaller interpretation and cut scope, or the more complete one? Default to smaller if the user has no preference.
-- The breakdown checkpoint: after the spec and work breakdown are written — but before any worktree or code — do they want to review and approve it once, or go straight through autonomously? The decomposition (interfaces, work split, dependency order) is where parallel-agent mistakes originate, so this is the highest-value moment to catch a wrong assumption, and it is the only optional pause in the run. Default to going straight through if the user has no preference.
+The brief is the only place intent was captured — once this step ends, the run is autonomous and every later ambiguity gets resolved against what the brief says. Restate it to the user: outcome, features, non-goals, inputs/outputs, constraints, doubt rule, and breakdown-checkpoint choice, plus any amendments folded in from an idea argument. Note the brief's age from its `Created` line and warn when it is more than a few days old — the codebase and the user's intent may have moved since it was written.
 
-Close the interview by restating the understood outcome, features, non-goals, doubt rule, and breakdown-checkpoint choice, and confirming them. That confirmation authorizes the run. If the user opted into the breakdown checkpoint, the only remaining interaction is that one approval in Step 3; otherwise there is no later gate at all. From this point on, never ask the user anything else; proceed on recorded assumptions.
+If the brief is missing the doubt rule or the checkpoint choice (briefify always writes them; a hand-written brief may not), apply the defaults — prefer-smaller-scope, straight-through — and state them in the restatement rather than asking. The breakdown checkpoint, when the brief opts in, is a one-time review of the spec and work breakdown before any worktree or code: the decomposition is where parallel-agent mistakes originate, and it is the only optional pause in the run.
+
+The user's confirmation of the restated brief authorizes the run. If the brief opted into the breakdown checkpoint, the only remaining interaction is that one approval in Step 3; otherwise there is no later gate at all. From this point on, never ask the user anything else; proceed on recorded assumptions.
 
 ### Environment pre-flight (script)
 
-Three of the run's prerequisites are mechanical and validated by one bundled script — the bare-repo layout, the Codex reviewer (plus the GNU timeout that bounds it), and the installed subagent definitions. Run it during the interview, before the closing confirmation, from the project root:
+Three of the run's prerequisites are mechanical and validated by one bundled script — the bare-repo layout, the Codex reviewer (plus the GNU timeout that bounds it), and the installed subagent definitions. Run it during this step, before the confirmation, from the project root:
 
 ```bash
 bash ~/.claude/skills/orchestrify/scripts/preflight.sh
@@ -53,7 +53,7 @@ On `RESULT: PASS`, proceed. On any `FAIL`, do not start — relay the failing ga
 
 **Why each gate, and how to fix a `FAIL`:**
 
-- **Bare repo** is the substrate the entire run depends on: every working copy — the user's, the integration tree, each item — is a peer worktree off one shared bare object store, so there is no privileged main checkout to corrupt. A `FAIL` means the repo is a conventional checkout. Converting it is the user's decision — surface the steps, do not do it autonomously: move the existing `.git` into a `.bare/` directory, add a top-level `.git` file containing `gitdir: ./.bare`, run `git --git-dir=.bare config core.bare true`, then recreate working copies as worktrees (`git --git-dir=.bare worktree add <branch>`).
+- **Bare repo** is the substrate the entire run depends on: every working copy — the user's, the integration tree, each item — is a peer worktree off one shared bare object store, so there is no privileged main checkout to corrupt. A `FAIL` means the repo is a conventional checkout. Converting it is the user's decision — never convert autonomously. Point them at the **initify skill**, which performs the conversion interactively with consent per step (and also sets up new repositories and bare clones); it preserves untracked files like `.env` that a naive re-checkout would lose.
 - **Codex** is the independent, cross-model reviewer in stage 4c — a different model family from the Claude implementer, so it does not share the implementer's blind spots. A missing or unauthenticated `codex` would fail every item at review time, deep into an autonomous run. Fix: install with `npm i -g @openai/codex`, or authenticate with `codex login` (or `codex login --with-api-key`). Installing or authenticating is the user's action — surface the command, do not do it autonomously.
 - **Subagent definitions** — every Claude stage is a dedicated subagent type (`orchestrify-spec`, `-plan`, `-implement`, `-fix`, `-commit`, `-merge`, `-integrate`) whose instructions load as its system prompt; the orchestrator spawns by type and passes only per-item values. They ship with the skill and are installed into the Claude agents directory by `install-claude-skills.sh`, which the harness loads at session start. A `FAIL` means the skill is not fully installed — re-run `install-claude-skills.sh` from the skills repo. If they were only just installed this session, the harness may not have picked them up yet; a fresh session loads them.
 
@@ -63,7 +63,7 @@ The run only stays autonomous if the harness will not raise permission prompts: 
 
 **This requires `bypassPermissions` mode — an allow-list is not sufficient.** The subagents are themselves models that decide commands at runtime (dependency installs, build and test variants, git invocations with assorted flags, `find`, `sed`, and so on), so the command set is open-ended and no static `permissions.allow` list can anticipate it. Beyond that, the harness matches Bash rules as prefix globs against the literal command string, so even listed commands slip through when they contain `$(…)` substitutions, lead with flags like `git --git-dir=…`, or are compound (`cd foo && …`). A leaked prompt is therefore a question of *when*, not *whether* — which is why the fix is the session mode, not the rules.
 
-The skill cannot flip the mode itself, so confirm it during the interview before the closing confirmation: the session must be in `bypassPermissions` mode for the run. Enable it one of three ways:
+The skill cannot flip the mode itself, so confirm it during this step, before the confirmation: the session must be in `bypassPermissions` mode for the run. Enable it one of three ways:
 
 - **In-session toggle** — press Shift+Tab to cycle the permission mode until the footer shows "bypass permissions". Easiest; do it right before the run.
 - **Launch flag** — start the CLI with `claude --dangerously-skip-permissions`.
@@ -94,14 +94,16 @@ Create the run directory at the project root — the directory that holds the ba
 - Make `<slug>` a short kebab-case description of the idea, 3-5 words max.
 - Worktree directories sit at `<repo-root>` and are named after their branches: `orchestrify-<slug>` for integration, `orchestrify-<slug>-<ID>` for each item. The `.orchestrify/` metadata is scratch space on disk, outside every worktree, so nothing in it can be committed by accident.
 
+Consume the brief now: `mv` it to `<run-dir>/brief.md`. The move is what marks it used — the briefs directory only ever holds unconsumed briefs — and it archives the confirmed intent with the run that acted on it.
+
 With the run directory scaffolded, **delegate the spec — do not explore the codebase in the orchestrator context.** This is the same rule as every other stage: heavy exploration lives and dies in a subagent, and the orchestrator only reads the artifact that comes back. Spawn one `orchestrify-spec` subagent, passing only:
 
 - the run directory
 - the repository root (`<repo-root>`)
 - the current timestamp, from `date +"%Y-%m-%d %H:%M"` — the agent has no shell, so it cannot generate one for the spec's `Created` line
-- the **interview brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule exactly as you restated and confirmed them at the close of the interview
+- the **brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule from the confirmed brief, plus any amendments confirmed with it
 
-That confirmed restatement *is* the brief — pass it faithfully, because it is the whole of the user's intent and every later autonomous decision cites the spec it produces. The agent explores the codebase, defines the shared **Interfaces Between Work Items**, and writes the full spec — outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered **Work Breakdown** with file ownership, assumptions, the doubt rule, and risks — to `<run-dir>/spec.md`, returning a short summary. Its exploration dies with its context; only `spec.md` and the summary return, so the orchestrator stays lean for the long autonomous loop ahead. If the agent reports that the requested scope cannot be split cleanly against the codebase — a feature the existing code fights, an interface it forces — resolve it under **Escalation** before proceeding.
+Pass the brief faithfully — it is the whole of the user's intent, and every later autonomous decision cites the spec it produces. The agent explores the codebase, defines the shared **Interfaces Between Work Items**, and writes the full spec — outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered **Work Breakdown** with file ownership, assumptions, the doubt rule, and risks — to `<run-dir>/spec.md`, returning a short summary. Its exploration dies with its context; only `spec.md` and the summary return, so the orchestrator stays lean for the long autonomous loop ahead. If the agent reports that the requested scope cannot be split cleanly against the codebase — a feature the existing code fights, an interface it forces — resolve it under **Escalation** before proceeding.
 
 The spec agent authors `spec.md` **once**. From here on the orchestrator owns and maintains it: the Decisions log, interface revisions, and breakdown amendments during the run are all orchestrator edits (Step 4's Escalation), never a re-spawn — the sole exception is a structural revision requested at the Step 3 checkpoint, which re-spawns the spec agent (see Step 3).
 
@@ -119,9 +121,9 @@ Statuses: `pending` → `planning` → `planned` → `implementing` → `reviewi
 
 ## Step 3: Announce and proceed
 
-Report the spec to the user — outcome, work items, dependency order, what will run in parallel, key assumptions. How this lands depends on the breakdown-checkpoint choice made in the interview:
+Report the spec to the user — outcome, work items, dependency order, what will run in parallel, key assumptions. How this lands depends on the breakdown-checkpoint choice recorded in the brief:
 
-- **Opted out (the default):** this is a one-way status update. Proceed immediately; do not wait for or request approval — the interview's closing confirmation already authorized the run. If the user interjects on their own, incorporate it; never solicit it.
+- **Opted out (the default):** this is a one-way status update. Proceed immediately; do not wait for or request approval — the Step 1 confirmation already authorized the run. If the user interjects on their own, incorporate it; never solicit it.
 - **Opted in:** this is the one authorized pause. Present the spec and breakdown and ask once for approval. Incorporate any changes they request: a **structural** revision — re-splitting items, reordering dependencies, reworking an interface — re-spawns the `orchestrify-spec` agent with the current `spec.md` plus the requested changes, because it may need fresh codebase exploration; a **trivial** revision — wording, a renamed item, a tweaked assumption — the orchestrator edits inline. Then proceed. This is the final interactive moment of the run; after it, the run is autonomous and never waits on the user again.
 
 Set the spec status to `approved`. Create the integration worktree at the repo root, on a fresh branch based on the trunk tip:
@@ -132,7 +134,7 @@ git worktree add <repo-root>/orchestrify-<slug> -b orchestrify/<slug> <trunk-bra
 
 Completed items are merged into this branch, and `orchestrify/<slug>` is the run's deliverable — the user lands it onto trunk themselves at the end. The orchestrator never checks out or writes the user's own worktree.
 
-The spec must also record the **doubt rule** from the interview — every later autonomous decision cites it.
+The spec must also record the **doubt rule** from the brief — every later autonomous decision cites it.
 
 ## Step 4: Run the work loop
 
@@ -282,10 +284,10 @@ If the merge agent aborts on a semantic conflict, go to **Escalation** — two w
 
 When an agent reports that the problem is structural — the spec is wrong, the breakdown missed a dependency, an interface does not survive contact with the codebase, or the fix loop is exhausted — the orchestrator decides autonomously. Never ask the user. Apply this decision rule:
 
-**Amend and continue** when a fix exists that preserves the interview's stated outcome, features, and non-goals — the change only touches *how*, not *what*. Examples: re-split an item, reorder dependencies, revise an interface both sides can adopt, accept an implementation deviation. Then:
+**Amend and continue** when a fix exists that preserves the brief's stated outcome, features, and non-goals — the change only touches *how*, not *what*. Examples: re-split an item, reorder dependencies, revise an interface both sides can adopt, accept an implementation deviation. Then:
 
 1. Update `spec.md` (interfaces, breakdown) and regenerate plans for affected unstarted items.
-2. Record the decision in a `## Decisions` log in `spec.md`: what broke, what was changed, and why it preserves the interview's intent, citing the doubt rule where it applied.
+2. Record the decision in a `## Decisions` log in `spec.md`: what broke, what was changed, and why it preserves the brief's intent, citing the doubt rule where it applied.
 3. Resume the loop. Report the amendment to the user as a one-way status line.
 
 **Block and route around** when every fix would alter *what* was agreed — dropping or changing a promised feature, violating a stated constraint, expanding scope past a non-goal. Guessing here would silently ship something the user did not ask for. Then:
@@ -351,10 +353,10 @@ After writing the file, give the user a short spoken summary — what shipped wi
 
 - Never attribute commits to Claude. No commit produced by any agent in the run — commit agent, merge agent, escalation fixes — may mention Claude, AI, agents, this orchestration process, or the user anywhere in the message: not the subject, not the body, not the footers. No `Co-Authored-By: Claude` and no `Generated with` trailers. Commit messages describe only the change itself.
 - The orchestrator never implements, reviews, or explores deeply itself. If you catch yourself reading source files at length in the main context, delegate.
-- Each Claude stage is a dedicated subagent type (`orchestrify-spec`, `orchestrify-plan`, `orchestrify-implement`, `orchestrify-fix`, `orchestrify-commit`, `orchestrify-merge`, `orchestrify-integrate`) whose instructions are its definition, loaded as its system prompt. The orchestrator spawns by type and passes only the per-item values — run directory, worktree path, ID and title, owned files, branch names; the spec agent instead gets the interview brief and repo root. The heavy stage instructions never enter the orchestrator's context. Codex review (4c) is the exception: it is an external CLI the orchestrator runs directly, not a subagent.
+- Each Claude stage is a dedicated subagent type (`orchestrify-spec`, `orchestrify-plan`, `orchestrify-implement`, `orchestrify-fix`, `orchestrify-commit`, `orchestrify-merge`, `orchestrify-integrate`) whose instructions are its definition, loaded as its system prompt. The orchestrator spawns by type and passes only the per-item values — run directory, worktree path, ID and title, owned files, branch names; the spec agent instead gets the brief and repo root. The heavy stage instructions never enter the orchestrator's context. Codex review (4c) is the exception: it is an external CLI the orchestrator runs directly, not a subagent.
 - State lives in files, not in conversation memory. After any interruption, `state.md` plus the plan files are sufficient to resume.
 - Pass context between stages through artifact files, never by relaying summaries — the implement agent reads the plan file itself, the Codex reviewer reads the plan and diff itself and writes findings to its review file, and the fix agent reads that review file itself.
 - One worktree per work item, created by the orchestrator at the repo root off the shared bare repo, shared by that item's implement, Codex review, fix, and commit stages, removed only after merge. All worktrees — the user's, the integration tree, and each item — are peers off the bare repo; the run never reads or writes the user's worktree. Only the serialized merge agent writes the integration branch, inside the integration worktree.
 - If a run is abandoned, clean up with `git worktree list` and remove any `orchestrify/` worktrees and branches left behind.
-- After the interview closes — and the optional breakdown checkpoint in Step 3, if the user opted into it — the run never waits on the user: no approval requests, no clarifying questions, no AskUserQuestion. Ambiguity resolves against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report.
+- After the Step 1 confirmation — and the optional breakdown checkpoint in Step 3, if the brief opted into it — the run never waits on the user: no approval requests, no clarifying questions, no AskUserQuestion. Ambiguity resolves against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report.
 - Keep the user informed at phase transitions with one or two one-way status lines: items started, items merged, amendments made, anything blocked. Inform, never ask.

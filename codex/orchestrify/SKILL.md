@@ -1,6 +1,6 @@
 ---
 name: orchestrify
-description: Drive a substantial feature from idea to a verified integration branch using isolated Codex subagents, independent Claude Code reviews, and one git worktree per work item. Use when Codex should interview the user, write a spec and dependency-ordered work breakdown, plan and implement unblocked items in parallel, review each item with Claude and run a Codex fixer loop, commit each item, merge them into an integration worktree, and verify the assembled feature. Requires Codex multi-agent tools, an authenticated Claude CLI, and a bare-repository-with-worktrees layout. Do not use for small changes or when the user only wants a spec, plan, review, or commit.
+description: Drive a substantial feature from idea to a verified integration branch using isolated Codex subagents, independent Claude Code reviews, and one git worktree per work item. Use when Codex should run fully autonomously from a confirmed brief — discover the brief file the briefify skill wrote in `.orchestrify/briefs/`, restate and confirm it once, write a spec and dependency-ordered work breakdown, plan and implement unblocked items in parallel, review each item with Claude and run a Codex fixer loop, commit each item, merge them into an integration worktree, and verify the assembled feature. Requires a brief (without one, the skill only points the user at briefify and stops), Codex multi-agent tools, an authenticated Claude CLI, and a bare-repository-with-worktrees layout. Do not use for small changes or when the user only wants a spec, plan, review, or commit.
 ---
 
 # Orchestrify
@@ -19,20 +19,20 @@ Resolve this skill's installed directory before starting. Use:
 
 Read a stage reference before spawning that stage. Include its complete instructions in the subagent prompt, followed by the per-item values. Do not assume subagents inherit this skill.
 
-## 1. Interview and preflight
+## 1. Confirm the brief and preflight
 
-If no idea was provided, ask what to build.
+The run starts from a brief — a captured interview, written earlier by the briefify skill. Orchestrify does not interview: capturing intent well takes an unhurried conversation, and that conversation is briefify's whole job.
 
-Interview the user in one or two compact rounds:
+Check for a waiting brief: list `.orchestrify/briefs/*.md` at the repo root — one `ls`, filenames only, never reading files to decide. The directory's top level holds only unconsumed briefs (its `drafts/` subdirectory does not count), so presence is status.
 
-- Define the outcome, required features, and explicit non-goals.
-- Define inputs, outputs, side effects, and integration points.
-- Capture compatibility, performance, scope, and delivery constraints.
-- Choose the doubt rule: prefer smaller scope or prefer completeness. Default to smaller scope.
-- Offer one optional checkpoint after the spec and breakdown but before code. Default to no checkpoint.
-- Confirm the trunk branch reported by preflight.
+- Exactly one brief: read it and continue below.
+- Several briefs: present the filenames — the timestamped names identify them — and ask which one this run is for. Read only the chosen one.
+- None: stop. Tell the user orchestrify runs from a brief and to run briefify first — suggesting it with any idea they gave — then invoke orchestrify again. Do not interview as a substitute, and do not run briefify for them.
+- An idea alongside a brief: if it names the same work, fold it into the brief as an amendment at the confirmation; if unrelated, ask whether to run the brief anyway or take the new idea to briefify first.
 
-Run the preflight script from the project root during the interview:
+Restate the brief to the user: outcome, features, non-goals, inputs/outputs, constraints, doubt rule, and checkpoint choice, plus any amendments. Note its age from the `Created` line and warn when it is more than a few days old — the codebase and the user's intent may have moved. If the doubt rule or checkpoint choice is missing (briefify always writes them; a hand-written brief may not), apply the defaults — smaller scope, no checkpoint — and state them in the restatement rather than asking. Confirm the trunk branch reported by preflight.
+
+Run the preflight script from the project root before the confirmation:
 
 ```bash
 bash <skill-dir>/scripts/preflight.sh
@@ -47,13 +47,13 @@ It checks:
 - `TIMEOUT`: GNU `timeout` or `gtimeout` is available for bounded reviews.
 - `RESULT`: success only when all gates pass.
 
-On failure, stop and report the remediation. Do not convert the repository autonomously.
+On failure, stop and report the remediation. Do not convert the repository autonomously — for the layout and tooling gates, point the user at the initify skill, which fixes them interactively with consent per step.
 
 Confirm that this Codex session exposes the multi-agent spawn, wait, message, and close tools. If they are not currently loaded, discover them through the tool-discovery mechanism. If unavailable, stop.
 
-The run must not depend on mid-run approval prompts. Before closing the interview, tell the user it requires a dedicated Codex session with filesystem and command permissions broad enough for worktree creation, dependency installation, builds, tests, and local git commits. If the active policy would prompt for routine operations, stop so the user can reconfigure the session. Never weaken platform security controls yourself.
+The run must not depend on mid-run approval prompts. Before the confirmation, tell the user it requires a dedicated Codex session with filesystem and command permissions broad enough for worktree creation, dependency installation, builds, tests, and local git commits. If the active policy would prompt for routine operations, stop so the user can reconfigure the session. Never weaken platform security controls yourself.
 
-Close by restating the outcome, features, non-goals, doubt rule, trunk, and checkpoint choice. The user's confirmation authorizes the run. After that, only pause for the opted-in checkpoint or a platform-enforced permission request.
+Close by confirming the restated brief — outcome, features, non-goals, doubt rule, trunk, and checkpoint choice. The user's confirmation authorizes the run. After that, only pause for the opted-in checkpoint or a platform-enforced permission request.
 
 ## 2. Write the run artifacts
 
@@ -81,14 +81,16 @@ Create:
 
 Keep all worktrees at `<repo-root>`, never inside `.orchestrify/`. Make `<slug>` a short kebab-case phrase.
 
+Consume the brief now: `mv` it to `<run-dir>/brief.md`. The move is what marks it used — the briefs directory only ever holds unconsumed briefs — and it archives the confirmed intent with the run that acted on it.
+
 Do not explore the codebase in the orchestrator context. Read `references/spec-agent.md` and spawn one spec worker, passing:
 
 - the run directory
 - the repository root
 - the current timestamp, from `date +"%Y-%m-%d %H:%M"`, for the spec's `Created` line
-- the **interview brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule exactly as you restated and confirmed them at the close of the interview
+- the **brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule from the confirmed brief, plus any amendments confirmed with it
 
-That confirmed restatement is the brief — pass it faithfully; it is the whole of the user's intent, and every later decision cites the spec it produces. The worker explores the repository, defines the shared interfaces, and writes `<run-dir>/spec.md` (outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered work breakdown with file ownership, assumptions, doubt rule, risks), returning a short summary. Its exploration stays in its own context; only the spec and summary return. If it reports that the requested scope cannot split cleanly against the codebase, treat that as a structural problem (section 5) before proceeding.
+Pass the brief faithfully; it is the whole of the user's intent, and every later decision cites the spec it produces. The worker explores the repository, defines the shared interfaces, and writes `<run-dir>/spec.md` (outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered work breakdown with file ownership, assumptions, doubt rule, risks), returning a short summary. Its exploration stays in its own context; only the spec and summary return. If it reports that the requested scope cannot split cleanly against the codebase, treat that as a structural problem (section 5) before proceeding.
 
 The spec worker authors `spec.md` once; the orchestrator maintains it thereafter — Decisions log, interface revisions, and amendments are orchestrator edits, not a re-spawn. The exception is a structural revision requested at the section 3 checkpoint, which re-spawns the spec worker with the current spec plus the requested changes.
 
@@ -102,8 +104,8 @@ Use `blocked` with a reason for failures. Only `merged` unblocks dependents.
 
 Report the outcome, work items, dependency order, expected parallelism, and assumptions.
 
-- If the user declined the checkpoint, proceed immediately.
-- If the user opted in, ask once for approval and revise as requested: a structural revision (re-splitting items, reordering dependencies, reworking an interface) re-spawns the spec worker with the current spec plus the changes; a trivial revision (wording, a renamed item) the orchestrator edits inline.
+- If the brief declined the checkpoint, proceed immediately.
+- If it opted in, ask once for approval and revise as requested: a structural revision (re-splitting items, reordering dependencies, reworking an interface) re-spawns the spec worker with the current spec plus the changes; a trivial revision (wording, a renamed item) the orchestrator edits inline.
 
 Set the spec status to `approved`, then create the integration worktree:
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# orchestrify pre-flight — read-only environment validation, run once during the
-# interview before the closing confirmation. Run from the project root.
+# orchestrify pre-flight — read-only environment validation, run once during
+# Step 1 before the brief is confirmed. Run from the project root.
 #
 # Checks the three mechanical gates and prints one machine-readable line each:
 #   <KEY>: PASS
