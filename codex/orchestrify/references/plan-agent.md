@@ -2,7 +2,7 @@
 
 Plan one work item without modifying source.
 
-The task supplies `<repo-root>`, `<run-dir>`, `<ID>`, a title, and owned files. Read `<run-dir>/spec.md` first. Treat its Interfaces section as a hard contract. Explore the repository deeply enough to produce a self-contained plan for a fresh implementer.
+The task supplies `<integration-worktree>`, `<run-dir>`, `<ID>`, a title, and owned files. Read `<run-dir>/spec.md` first. Treat its Interfaces section as a hard contract. Explore the code inside `<integration-worktree>` — it holds the integration branch, including every merged dependency this item builds on; never read the user's own worktrees — deeply enough to produce a self-contained plan for a fresh implementer.
 
 Write only `<run-dir>/plans/<ID>.md`:
 

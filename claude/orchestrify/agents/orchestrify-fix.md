@@ -14,6 +14,6 @@ Read, in order: `<run-dir>/spec.md` (the Interfaces section is a hard contract),
 
 For each finding rooted in local code, fix it directly in the worktree, and add the tests the reviewer says are missing rather than trusting the existing suite. Follow the codebase's existing conventions: prefer small, focused functions, descriptive intermediate variables, and minimal mutable state, with no speculative abstractions. Re-run the plan's Verification commands after fixing and make them pass.
 
-Do NOT fix — report instead: any finding the reviewer rooted in the plan's approach, the spec's interfaces, or another work item's files. A finding you judge incorrect you may decline, but say why.
+Do NOT fix — report instead: any finding the reviewer rooted in the plan's approach, the spec's interfaces, or another work item's files. A finding you judge incorrect you may decline, but say why. Any Medium or Low finding you deliberately leave unfixed must be recorded in the plan's Deviations section with a concrete reason — an unrecorded finding may not ride along to commit.
 
 Return: per finding, fixed / declined (with reason) / out-of-scope (plan|spec|cross-item); the tests you added; and the final verification result.

@@ -5,9 +5,10 @@
 #
 # This wraps the fragile parts of the invocation that the SKILL otherwise guards
 # with prose: the worktree cwd, the mandatory `< /dev/null`, the GNU timeout
-# bound, retry-once-on-failure, and — the part the orchestrator cannot eyeball —
-# the guarantee that a non-empty review artifact actually exists before the fix
-# agent reads it. An empty or truncated artifact is treated as a failure, never
+# bound, bounded retries with exponential backoff (subscription-auth 429s come
+# in bursts, so spaced retries succeed where an immediate one would not), and —
+# the part the orchestrator cannot eyeball — the guarantee that a non-empty
+# review artifact actually exists before the fix agent reads it. An empty or truncated artifact is treated as a failure, never
 # as a clean pass.
 #
 # Usage:
@@ -21,10 +22,11 @@
 #
 # Env:
 #   CODEX_REVIEW_TIMEOUT   seconds for the per-attempt timeout bound (default 900)
+#   CODEX_REVIEW_ATTEMPTS  max attempts, backoff 5s/15s/45s between (default 4)
 #
 # Output: diagnostics on stderr; one machine-readable line on stdout, last:
 #   CODEX_REVIEW: COMPLETED <output-file>     review artifact written, non-empty
-#   CODEX_REVIEW: FAILED <reason>             did not complete after one retry
+#   CODEX_REVIEW: FAILED <reason>             did not complete after all attempts
 #
 # Exit 0 iff the review completed and the artifact is non-empty; non-zero otherwise.
 
@@ -34,6 +36,7 @@ worktree="${1:-}"
 output="${2:-}"
 prompt_file="${3:-}"
 timeout_secs="${CODEX_REVIEW_TIMEOUT:-900}"
+max_attempts="${CODEX_REVIEW_ATTEMPTS:-4}"
 
 die() { echo "CODEX_REVIEW: FAILED $*" ; exit 1; }
 
@@ -82,13 +85,16 @@ review_ok() {
 }
 
 last_reason=""
-if review_ok; then
-  echo "CODEX_REVIEW: COMPLETED $output"
-  exit 0
-fi
-echo "first review attempt failed: $last_reason — retrying once" >&2
-if review_ok; then
-  echo "CODEX_REVIEW: COMPLETED $output"
-  exit 0
-fi
-die "Codex review did not complete after one retry ($last_reason)"
+backoff=5
+for ((i = 1; i <= max_attempts; i++)); do
+  if review_ok; then
+    echo "CODEX_REVIEW: COMPLETED $output"
+    exit 0
+  fi
+  if ((i < max_attempts)); then
+    echo "review attempt $i/$max_attempts failed: $last_reason — retrying in ${backoff}s" >&2
+    sleep "$backoff"
+    backoff=$((backoff * 3))
+  fi
+done
+die "Codex review did not complete after $max_attempts attempts ($last_reason)"

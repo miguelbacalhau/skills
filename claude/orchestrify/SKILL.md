@@ -34,7 +34,7 @@ Close the interview by restating the understood outcome, features, non-goals, do
 
 ### Environment pre-flight (script)
 
-Three of the run's prerequisites are mechanical and validated by one bundled script — the bare-repo layout, the Codex reviewer, and the installed subagent definitions. Run it during the interview, before the closing confirmation, from the project root:
+Three of the run's prerequisites are mechanical and validated by one bundled script — the bare-repo layout, the Codex reviewer (plus the GNU timeout that bounds it), and the installed subagent definitions. Run it during the interview, before the closing confirmation, from the project root:
 
 ```bash
 bash ~/.claude/skills/orchestrify/scripts/preflight.sh
@@ -45,6 +45,7 @@ That is the default install path; if the skill is installed elsewhere, run `pref
 - `BARE_REPO: PASS|FAIL` — the project is a bare repository with worktrees.
 - `TRUNK_CANDIDATE: <branch>` — informational, not a gate: the bare repo's default branch, the run's likely trunk. Confirm the trunk with the user; the integration branch is created from its tip.
 - `CODEX: PASS|FAIL` — the Codex CLI is installed and authenticated.
+- `TIMEOUT: PASS|FAIL` — GNU `timeout` or `gtimeout` is on the PATH to bound each Codex review.
 - `AGENTS: PASS|FAIL` — all seven subagent definitions are installed.
 - `RESULT: PASS|FAIL` — mirrored by the exit code, which is 0 iff every gate passed.
 
@@ -97,6 +98,7 @@ With the run directory scaffolded, **delegate the spec — do not explore the co
 
 - the run directory
 - the repository root (`<repo-root>`)
+- the current timestamp, from `date +"%Y-%m-%d %H:%M"` — the agent has no shell, so it cannot generate one for the spec's `Created` line
 - the **interview brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule exactly as you restated and confirmed them at the close of the interview
 
 That confirmed restatement *is* the brief — pass it faithfully, because it is the whole of the user's intent and every later autonomous decision cites the spec it produces. The agent explores the codebase, defines the shared **Interfaces Between Work Items**, and writes the full spec — outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered **Work Breakdown** with file ownership, assumptions, the doubt rule, and risks — to `<run-dir>/spec.md`, returning a short summary. Its exploration dies with its context; only `spec.md` and the summary return, so the orchestrator stays lean for the long autonomous loop ahead. If the agent reports that the requested scope cannot be split cleanly against the codebase — a feature the existing code fights, an interface it forces — resolve it under **Escalation** before proceeding.
@@ -161,8 +163,9 @@ Spawn one `orchestrify-plan` subagent per unblocked item, in parallel — planni
 - the run directory
 - the item's ID and title
 - the files it owns
+- the integration worktree path (`<repo-root>/orchestrify-<slug>`) — the tree to explore: it holds the integration branch, including every merged dependency this item builds on
 
-The agent reads `spec.md` itself, explores the codebase, and writes its plan to `<run-dir>/plans/<ID>.md`. If the agent reports a spec conflict or infeasibility, go to **Escalation**.
+The agent reads `spec.md` itself, explores the codebase in the integration worktree, and writes its plan to `<run-dir>/plans/<ID>.md`. If the agent reports a spec conflict or infeasibility, go to **Escalation**.
 
 ### 4b. Implement agent
 
@@ -218,7 +221,7 @@ Then call the script (the default install path; if the skill is installed elsewh
   <run-dir>/reviews/<ID>-prompt.md
 ```
 
-The script retries once internally and prints one machine-readable line last: `CODEX_REVIEW: COMPLETED <file>` (exit 0, artifact written and non-empty) or `CODEX_REVIEW: FAILED <reason>` (non-zero). It guards the two traps that otherwise read as "no findings": the codex 0.120.0+ stdin hang (caught by `< /dev/null` and the timeout), and a clean exit over an empty `-o` file (treated as failure, not a clean pass) — so you never reconstruct the `codex exec` flags yourself. **On `FAILED`, do not proceed on the empty or partial findings file** — mark the item `blocked` per **Escalation** with the reason the script reports ("Codex review did not complete (timeout/error after one retry)") and keep its worktree for a follow-up run. Never treat a missing or truncated review artifact as a clean pass.
+The script retries internally with exponential backoff (up to 4 attempts — Codex 429s on subscription auth come in bursts, so spaced retries succeed where an immediate one would not) and prints one machine-readable line last: `CODEX_REVIEW: COMPLETED <file>` (exit 0, artifact written and non-empty) or `CODEX_REVIEW: FAILED <reason>` (non-zero). It guards the two traps that otherwise read as "no findings": the codex 0.120.0+ stdin hang (caught by `< /dev/null` and the timeout), and a clean exit over an empty `-o` file (treated as failure, not a clean pass) — so you never reconstruct the `codex exec` flags yourself. **On `FAILED`, do not proceed on the empty or partial findings file** — mark the item `blocked` per **Escalation** with the reason the script reports ("Codex review did not complete (timeout/error after retries)") and keep its worktree for a follow-up run. Never treat a missing or truncated review artifact as a clean pass.
 
 **Throttle review concurrency.** Plan and implement stages parallelize freely, but the Codex reviews contend for one Codex auth — on a ChatGPT-subscription auth, firing several at once triggers 429 rate-limit backoff that turns every concurrent review slow (the parallel-review case is exactly where the multi-minute stalls cluster). Cap **concurrent invocations of the review script at 2-3** even when more items are ready to review; let the rest queue. This bounds wall-clock without serializing the whole run.
 
@@ -232,7 +235,7 @@ Findings land in `<run-dir>/reviews/<ID>-codex.md`. The orchestrator reads only 
 
 The agent reads `spec.md`, the plan, and the Codex findings at `<run-dir>/reviews/<ID>-codex.md` itself; it fixes code-rooted findings, adds missing tests, re-runs Verification, and reports findings it cannot resolve inside the worktree (rooted in the plan, the spec interfaces, or another item).
 
-The fix loop: after the fix agent finishes, **re-run `scripts/codex-review.sh` once** (reusing the same `<ID>-prompt.md`) over the new state. If it returns no Critical or High findings, proceed to commit. If code-rooted Critical/High findings remain, run one more fix round — **maximum 2 fix rounds** — then go to **Escalation**. Any finding the reviewer roots in the plan, the spec's interfaces, or another work item goes to **Escalation** immediately: the fix agent cannot resolve it inside this one worktree.
+The fix loop: after the fix agent finishes, **re-run `scripts/codex-review.sh` once** (reusing the same `<ID>-prompt.md`) over the new state. If it returns no Critical or High findings, proceed to commit. Medium and Low findings may ride along unfixed only when the fix agent recorded them in the plan's Deviations section with a concrete reason; they resurface in the final report's Follow-ups. If code-rooted Critical/High findings remain, run one more fix round — **maximum 2 fix rounds** — then go to **Escalation**. Any finding the reviewer roots in the plan, the spec's interfaces, or another work item goes to **Escalation** immediately: the fix agent cannot resolve it inside this one worktree.
 
 ### 4d. Commit agent
 
@@ -248,7 +251,10 @@ Before recording the hash, check the returned message: if it mentions
 Claude, AI, agents, the orchestration process, or the user anywhere —
 subject, body, or trailers — treat the step as failed, run
 `git reset --soft HEAD~1` in the worktree, and re-run the commit agent
-with the violation quoted in its prompt.
+with the violation quoted in its prompt. Cap this at two re-runs: if
+the message still violates after the second, do not reset again —
+rewrite it yourself with `git commit --amend -m` in the worktree, a
+compliant Conventional Commits message describing only the change.
 
 Record the hash in `state.md` and mark the item `committed`.
 

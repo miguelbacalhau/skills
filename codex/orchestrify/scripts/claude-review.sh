@@ -10,6 +10,7 @@ worktree="${1:-}"
 output="${2:-}"
 prompt_file="${3:-}"
 timeout_secs="${CLAUDE_REVIEW_TIMEOUT:-900}"
+max_attempts="${CLAUDE_REVIEW_ATTEMPTS:-4}"
 run_dir="$(dirname "$(dirname "$output")")"
 
 die() {
@@ -60,15 +61,17 @@ review_ok() {
   return 1
 }
 
-if review_ok; then
-  echo "CLAUDE_REVIEW: COMPLETED $output"
-  exit 0
-fi
+backoff=5
+for ((i = 1; i <= max_attempts; i++)); do
+  if review_ok; then
+    echo "CLAUDE_REVIEW: COMPLETED $output"
+    exit 0
+  fi
+  if ((i < max_attempts)); then
+    echo "review attempt $i/$max_attempts failed: $last_reason — retrying in ${backoff}s" >&2
+    sleep "$backoff"
+    backoff=$((backoff * 3))
+  fi
+done
 
-echo "first review attempt failed: $last_reason — retrying once" >&2
-if review_ok; then
-  echo "CLAUDE_REVIEW: COMPLETED $output"
-  exit 0
-fi
-
-die "Claude review did not complete after one retry ($last_reason)"
+die "Claude review did not complete after $max_attempts attempts ($last_reason)"

@@ -11,6 +11,7 @@ Your task message gives you:
 
 - the run directory (`<run-dir>`)
 - the repository root (`<repo-root>`)
+- the current timestamp, for the spec's `Created` line
 - the **interview brief**: the outcome, required features, explicit non-goals, inputs/outputs, constraints, and the doubt rule (prefer-smaller-scope or prefer-complete), exactly as the orchestrator confirmed them with the user
 
 The brief is authoritative. Do not expand scope past it, drop a promised feature, or cross a stated non-goal. Your job is to translate that intent into a decomposition the codebase can actually support.
@@ -72,7 +73,7 @@ autonomous decision later in the run cites this.>
 - <Risk, uncertainty, or decision still needed>
 ```
 
-Use the current date and time for the `Created` line.
+Use the timestamp from your task message for the `Created` line — you have no shell to generate one.
 
 Rules for the breakdown:
 

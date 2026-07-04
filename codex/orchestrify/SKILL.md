@@ -85,6 +85,7 @@ Do not explore the codebase in the orchestrator context. Read `references/spec-a
 
 - the run directory
 - the repository root
+- the current timestamp, from `date +"%Y-%m-%d %H:%M"`, for the spec's `Created` line
 - the **interview brief**: the outcome, features, non-goals, inputs/outputs, constraints, and doubt rule exactly as you restated and confirmed them at the close of the interview
 
 That confirmed restatement is the brief — pass it faithfully; it is the whole of the user's intent, and every later decision cites the spec it produces. The worker explores the repository, defines the shared interfaces, and writes `<run-dir>/spec.md` (outcome, features, non-goals, inputs/outputs, interfaces, a 2-8 item dependency-ordered work breakdown with file ownership, assumptions, doubt rule, risks), returning a short summary. Its exploration stays in its own context; only the spec and summary return. If it reports that the requested scope cannot split cleanly against the codebase, treat that as a structural problem (section 5) before proceeding.
@@ -150,7 +151,7 @@ Read `references/plan-agent.md`, then spawn one planner per ready item with:
 - run directory
 - item ID and title
 - owned files
-- repository root
+- the integration worktree path (`<repo-root>/orchestrify-<slug>`) — the tree to explore: it holds the integration branch, including every merged dependency the item builds on
 
 The planner writes `<run-dir>/plans/<ID>.md`. Reconcile the whole ready batch before creating item worktrees.
 
@@ -176,7 +177,7 @@ Read `references/claude-review.md` and assemble its prompt with the item values.
   <run-dir>/reviews/<ID>-prompt.md
 ```
 
-The wrapper runs Claude Code read-only, retries once, and requires a non-empty artifact. On `CLAUDE_REVIEW: FAILED`, mark the item blocked; never interpret missing output as approval.
+The wrapper runs Claude Code read-only, retries with exponential backoff (up to 4 attempts — auth rate-limit bursts pass between spaced retries), and requires a non-empty artifact. On `CLAUDE_REVIEW: FAILED`, mark the item blocked; never interpret missing output as approval.
 
 Read the Claude review artifact. If there are code-rooted Critical or High findings, read `references/fix-agent.md` and spawn a Codex fixer in the same worktree. Re-run Claude review over the new state. Allow at most two fix rounds.
 
@@ -186,7 +187,7 @@ Throttle concurrent Claude reviews to 2-3 to avoid auth and rate-limit contentio
 
 ### Commit
 
-Read `references/commit-agent.md` and spawn a commit worker on a lighter Codex model tier (a smaller model or reduced reasoning effort) — writing the message is mechanical and does not need the reasoning tier the build stages use. Validate its returned commit message. If it mentions Codex, AI, agents, orchestration, or the user, soft-reset the commit and retry with the violation quoted.
+Read `references/commit-agent.md` and spawn a commit worker on a lighter Codex model tier (a smaller model or reduced reasoning effort) — writing the message is mechanical and does not need the reasoning tier the build stages use. Validate its returned commit message. If it mentions Codex, AI, agents, orchestration, or the user, soft-reset the commit and retry with the violation quoted — at most twice. If the message still violates after the second retry, do not reset again: rewrite it yourself with `git commit --amend -m` in the worktree, a compliant Conventional Commits message describing only the change.
 
 Record the commit hash and mark the item `committed`.
 
