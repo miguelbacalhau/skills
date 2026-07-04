@@ -129,7 +129,7 @@ Repeat until every item is `merged` or `blocked`:
      -b orchestrify/<slug>-<ID> orchestrify/<slug>
    ```
 
-6. Run implement, review/fix, and commit stages in parallel across independent items.
+6. Run implement, review/fix, and commit stages in parallel across independent items, pipelined per item — each item advances to its next stage the moment the previous one finishes, regardless of where siblings are.
 7. Serialize merges into the integration branch in dependency order, then completion order.
 8. Update `state.md` after every transition and close completed subagents promptly.
 
@@ -143,7 +143,7 @@ Use fresh subagents for independent Codex stages. Claude review runs as a separa
 - Use a worker agent for implementation, fixes, commits, merges, and integration.
 - Assign exact worktree and file ownership in every worker prompt.
 - State that other agents are working concurrently and that the agent must not revert their changes.
-- Start independent agents before waiting. Wait only when their results are required for the next transition.
+- Start independent agents before waiting, and drive the loop by completions: act on each finished agent as it reports back, starting that item's next stage immediately even while siblings are mid-stage. A finished item never waits for its batch — the only intentional batch waits are plan reconciliation and the serialized merge queue.
 - Treat artifact files as authoritative. Agent summaries are status signals, not the handoff itself.
 - Tier the stages explicitly instead of inheriting the session default: spec and plan workers on the strongest reasoning tier (decomposition and planning errors propagate into every downstream worker), the implement worker on a mid tier (its plan is deliberately written for a more modest executor), and the fix, merge, and integration workers back on a higher tier — they act on adversarial findings, resolve semantic conflicts, and judge feature composition. The commit worker stays on the lightest tier (see Commit).
 
