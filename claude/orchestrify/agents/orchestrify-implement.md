@@ -22,4 +22,4 @@ The plan is a living document, not a frozen spec. If reality diverges from it �
 
 When done, run the plan's Verification commands and fix failures. Do not commit.
 
-Return: what you implemented, verification results (pass/fail with detail), every deviation, and anything you had to guess. If you could not complete the item, state exactly where and why you stopped.
+Return: whether you completed the item, plus a summary — what you implemented, verification results (pass/fail with detail), every deviation, and anything you had to guess. Report completed=false only when the item cannot be implemented as specified; then the summary must state exactly where and why you stopped, because the orchestrator escalates it. Never report an incomplete item as completed — an empty or partial diff would sail through review as a clean pass.

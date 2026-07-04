@@ -167,7 +167,7 @@ Read `references/implement-agent.md`, then spawn one worker per item with:
 - item ID and title
 - owned files
 
-The worker implements and verifies without committing.
+The worker implements and verifies without committing. If it reports the item cannot be implemented as specified, do not send it to review — an untouched worktree reads as a clean pass; treat the report as a structural problem (section 5).
 
 ### Review and fix
 
@@ -182,7 +182,7 @@ Read `references/claude-review.md` and assemble its prompt with the item values.
 
 The wrapper runs Claude Code read-only, retries with exponential backoff (up to 4 attempts — auth rate-limit bursts pass between spaced retries), and requires a non-empty artifact. On `CLAUDE_REVIEW: FAILED`, mark the item blocked; never interpret missing output as approval.
 
-Read the Claude review artifact. If there are code-rooted Critical or High findings, read `references/fix-agent.md` and spawn a Codex fixer in the same worktree. Re-run Claude review over the new state. Allow at most two fix rounds.
+Read the Claude review artifact. If it reports any code-rooted findings, read `references/fix-agent.md` and spawn a Codex fixer in the same worktree — only Critical/High findings gate the loop, but a Medium/Low finding may ride along only when recorded in the plan's Deviations, and the fixer is what fixes or records it. Re-run Claude review over the new state. Allow at most two fix rounds; block only on remaining Critical/High findings.
 
 Escalate immediately when a finding is rooted in the spec, plan, shared interface, or another item. Medium and Low findings may proceed only when explicitly recorded in the plan's Deviations section with a concrete reason.
 
@@ -221,7 +221,7 @@ If the doubt rule is smaller scope and an optional feature can be cleanly remove
 
 After the loop drains, read `references/integrate-agent.md` and spawn an integration worker in the integration worktree. It must run the full build and tests and exercise every feature against the spec.
 
-If it makes small fixes, run Claude review and the Codex fix loop over the integration diff, then use the commit stage. Treat larger mismatches as structural problems.
+If it makes small fixes, run Claude review and the Codex fix loop over the integration diff, then use the commit stage. Tell both the fixer and the commit worker that this pass has no plan file — their references say what stands in for it. Treat larger mismatches as structural problems.
 
 ## 7. Report
 

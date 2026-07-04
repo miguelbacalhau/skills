@@ -155,6 +155,35 @@ for agent_file in "${agent_files[@]}"; do
   fi
 done
 
+# Sweep dangling links that still point into this repo: a skill or agent
+# removed from the repo is no longer enumerated by the loops above, but its
+# leftover symlink still claims the name in the target directory.
+sweep_dangling() {
+  local dir="$1"
+  local kind="$2"
+  local link_path link_target
+
+  [[ -d "$dir" ]] || return 0
+
+  for link_path in "$dir"/*; do
+    [[ -L "$link_path" ]] || continue
+    link_target="$(readlink "$link_path")"
+    [[ "$link_target" == "$source_dir"/* ]] || continue
+    [[ -e "$link_path" ]] && continue
+
+    run rm "$link_path"
+    removed_count=$((removed_count + 1))
+    if [[ "$dry_run" == true ]]; then
+      echo "would remove dangling $kind: $link_path"
+    else
+      echo "removed dangling $kind: $link_path"
+    fi
+  done
+}
+
+sweep_dangling "$target_dir" "skill link"
+sweep_dangling "$agents_target_dir" "agent link"
+
 if [[ "$removed_count" -eq 0 ]]; then
   echo "ok: no matching links removed"
 fi
