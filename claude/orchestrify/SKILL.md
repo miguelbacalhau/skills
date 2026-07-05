@@ -82,8 +82,8 @@ Create the run directory at the project root — the directory that holds the ba
 <repo-root>/
 ├── .bare/                              # the bare repository (shared object store)
 ├── <user worktrees…>                   # e.g. main/ — untouched by the run
-├── orchestrify-<slug>/                 # integration worktree (branch orchestrify/<slug>)
-├── orchestrify-<slug>-<ID>/            # one worktree per in-flight item (e.g. orchestrify-<slug>-W1)
+├── orchestrify-<slug>/                 # integration worktree (branch feature/<slug>)
+├── orchestrify-<slug>-<ID>/            # one worktree per in-flight item (e.g. orchestrify-<slug>-W1, branch feature/<slug>-W1)
 └── .orchestrify/YYYYMMDD-HHMMSS-<slug>/
     ├── brief.md    # the consumed brief — the run's confirmed intent
     ├── spec.md     # requirements, interfaces, work breakdown, workflow runId
@@ -95,7 +95,7 @@ Create the run directory at the project root — the directory that holds the ba
 - `<repo-root>` is the directory containing the bare repo — resolve it as the parent of `git rev-parse --path-format=absolute --git-common-dir`.
 - Generate the timestamp by running `date +%Y%m%d-%H%M%S`.
 - Make `<slug>` a short kebab-case description of the idea, 3-5 words max.
-- Worktree directories sit at `<repo-root>` and are named after their branches: `orchestrify-<slug>` for integration, `orchestrify-<slug>-<ID>` for each item. The `.orchestrify/` metadata is scratch space on disk, outside every worktree, so nothing in it can be committed by accident.
+- Worktree directories sit at `<repo-root>` and are named after the run — `orchestrify-<slug>` for integration, `orchestrify-<slug>-<ID>` for each item — while their branches use the neutral `feature/<slug>[-<ID>]` namespace. The difference is deliberate: the `orchestrify-*` directory names are local scratch and the run's cleanup/discovery story (`git worktree list`), and never enter git; the `feature/*` branch names are what lands in git and shows on GitHub, so they carry no orchestrify trace. The `.orchestrify/` metadata is scratch space on disk, outside every worktree, so nothing in it can be committed by accident.
 
 Consume the brief now: `mv` it to `<run-dir>/brief.md`. The move is what marks it used — the briefs directory only ever holds unconsumed briefs — and it archives the confirmed intent with the run that acted on it.
 
@@ -122,10 +122,12 @@ Report the spec to the user — outcome, work items, dependency order, what will
 Set the spec status to `approved`. Create the integration worktree at the repo root, on a fresh branch based on the trunk tip:
 
 ```bash
-git worktree add <repo-root>/orchestrify-<slug> -b orchestrify/<slug> <trunk-branch>
+git worktree add <repo-root>/orchestrify-<slug> -b feature/<slug> <trunk-branch>
 ```
 
-Completed items are merged into this branch, and `orchestrify/<slug>` is the run's deliverable — the user lands it onto trunk themselves at the end. The run never checks out or writes the user's own worktree.
+The branch is `feature/<slug>` — a neutral namespace that reads as ordinary dev work on GitHub and leaves no orchestrify trace in git history; the slug keeps it collision-unlikely. `worktree add -b` fails loudly if `feature/<slug>` already exists, never silently reusing it — if it does, pick a different slug and retry rather than reusing the existing branch.
+
+Completed items are merged into this branch, and `feature/<slug>` is the run's deliverable — the user lands it onto trunk themselves at the end. The run never checks out or writes the user's own worktree.
 
 The spec must also record the **doubt rule** from the brief — every later autonomous decision cites it.
 
@@ -154,7 +156,7 @@ Workflow({
     runDir: "<run-dir>",
     repoRoot: "<repo-root>",
     slug: "<slug>",
-    integrationBranch: "orchestrify/<slug>",
+    integrationBranch: "feature/<slug>",
     items: [ { id: "W1", title: "…", deps: [], files: ["…"], taskId: "…" }, … ]   // verbatim from the spec's Work Breakdown, plus each item's status-task id
   }
 })
@@ -175,7 +177,7 @@ The workflow runs in the background, but its `log()` lines (items merged, items 
 - Blocked items' worktrees and branches were kept — list them for the follow-up run.
 - Proceed to Step 5; the returned values feed the report directly, with no intermediate status file to update.
 
-**If the run is interrupted** — session death, a kill, a harness restart — do not re-run stages conversationally: re-invoke the Workflow tool with the same `scriptPath` and `args` plus `resumeFromRunId: "<runId>"`, reading the runId from the `**Workflow run:**` line at the end of `spec.md` (and rebuilding `args` from the spec's Work Breakdown). Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Before resuming, reconcile leftover git state (`git worktree list`) only if the journal and the worktrees disagree. Migration note: a run started before the review stage moved to the `orchestrify-review` MCP agent cannot resume its review stages from the journal — the changed calls re-run live; everything before them still replays. Status tasks and resume: a `Status task:` line changes a stage call's journal key, but only when the item has a `taskId` — so resume a pre-taskId run **without** adding `taskId`s to the rebuilt args (the prompts stay byte-identical and everything replays; those items just get no live rows), and rebuild the args with the same `taskId`s for a run that already had them.
+**If the run is interrupted** — session death, a kill, a harness restart — do not re-run stages conversationally: re-invoke the Workflow tool with the same `scriptPath` and `args` plus `resumeFromRunId: "<runId>"`, reading the runId from the `**Workflow run:**` line at the end of `spec.md` (and rebuilding `args` from the spec's Work Breakdown). Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Before resuming, reconcile leftover git state (`git worktree list`) only if the journal and the worktrees disagree. Migration note: a run started before the review stage moved to the `orchestrify-review` MCP agent cannot resume its review stages from the journal — the changed calls re-run live; everything before them still replays. Status tasks and resume: a `Status task:` line changes a stage call's journal key, but only when the item has a `taskId` — so resume a pre-taskId run **without** adding `taskId`s to the rebuilt args (the prompts stay byte-identical and everything replays; those items just get no live rows), and rebuild the args with the same `taskId`s for a run that already had them. Branch namespace and resume: item branches are now `feature/<slug>-<ID>` (was `orchestrify/<slug>-<ID>`), and the branch name is embedded in the worktree/merge relay prompts and the merge agent's task message — so those journal keys shift, and a pre-change in-flight run resumed with the new script re-runs its git stages live (same class as the two caveats above; everything before them still replays). A **follow-up run** picking up a pre-change blocked item must rename its kept branch first — `git branch -m orchestrify/<slug>-<ID> feature/<slug>-<ID>` — because the kept worktree directory is resumed in place (directory names are unchanged) while every branch reference the new script makes uses the `feature/` name.
 
 ## Step 5: Report
 
@@ -188,7 +190,7 @@ Write the run report to `<run-dir>/report.md` **first**, then relay its highligh
 
 **Run:** <run-dir>
 **Completed:** <YYYY-MM-DD HH:MM>
-**Deliverable:** `orchestrify/<slug>`
+**Deliverable:** `feature/<slug>`
 
 ## Shipped
 
@@ -214,7 +216,7 @@ Write the run report to `<run-dir>/report.md` **first**, then relay its highligh
 
 ## Landing
 
-The deliverable is the `orchestrify/<slug>` branch, built in the integration worktree. Land it from your own worktree with `git merge --no-ff orchestrify/<slug>`, then optionally push.
+The deliverable is the `feature/<slug>` branch, built in the integration worktree. Land it from your own worktree with `git merge --no-ff feature/<slug>`, then optionally push.
 ```
 
 After writing the file, give the user a short spoken summary — what shipped with commit hashes, anything `blocked` and the decision it waits on, the integration result feature by feature, tokens spent, and the path to the full `report.md` — then the landing command. The report file is the authoritative version; the spoken summary just points at it.
@@ -227,6 +229,6 @@ After writing the file, give the user a short spoken summary — what shipped wi
 - State lives in files and the workflow journal, not in conversation memory. `spec.md` holds the breakdown and the `**Workflow run:**` runId line, `report.md` holds the outcome; mid-run state is the journal, and an interrupted run resumes with `resumeFromRunId` — never by re-running stages conversationally.
 - Pass context between stages through artifact files, never by relaying summaries — the implement agent reads the plan file itself, the Codex reviewer reads the plan and diff itself and writes findings to its review file, and the fix agent reads that review file itself. Structured agent returns (verdicts, hashes, reconciliation results) exist for the workflow's control flow, not as a substitute for the artifacts.
 - One worktree per work item, created by the workflow at the repo root off the shared bare repo, shared by that item's implement, Codex review, fix, and commit stages, removed only after merge. All worktrees — the user's, the integration tree, and each item — are peers off the bare repo; the run never reads or writes the user's worktree. Only the serialized merge agent writes the integration branch, inside the integration worktree.
-- If a run is abandoned, clean up with `git worktree list` and remove any `orchestrify/` worktrees and branches left behind — but prefer resuming via `resumeFromRunId` over abandoning.
+- If a run is abandoned, clean up with `git worktree list` and remove any leftover `orchestrify-*` worktrees plus their `feature/<slug>*` branches — and any legacy `orchestrify/*` branches from pre-change runs — but prefer resuming via `resumeFromRunId` over abandoning.
 - After the Step 1 confirmation — and the optional breakdown checkpoint in Step 3, if the brief opted into it — the run never waits on the user: no approval requests, no clarifying questions, no AskUserQuestion. Ambiguity resolves against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report.
 - Keep the user informed at phase transitions with one or two one-way status lines relayed from the workflow's progress: items started, items merged, amendments made, anything blocked. Inform, never ask.

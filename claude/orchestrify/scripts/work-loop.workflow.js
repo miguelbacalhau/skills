@@ -16,7 +16,7 @@
 //   runDir            .orchestrify/<timestamp>-<slug> — spec.md, plans/, reviews/ (absolute)
 //   repoRoot          parent of the bare repo; all worktrees live here (absolute)
 //   slug              run slug; integration worktree is <repoRoot>/orchestrify-<slug>
-//   integrationBranch orchestrify/<slug>
+//   integrationBranch feature/<slug> — item branches derive from it (${integrationBranch}-${id})
 //   items             [{ id, title, deps: [ids], files: [paths], taskId? }] from the Work
 //                     Breakdown; taskId is the id of the item's session task
 //                     (created by the main conversation before launch), updated
@@ -276,7 +276,7 @@ const planItem = i => agent(
 // legitimate domain vocabulary ("user-agent header", "feat: add AI summarizer")
 // that false-positives constantly; keeping them out of ordinary prose is the
 // stage agents' own instruction, not something a regex can decide.
-const banned = /claude|anthropic|co-authored-by|generated (with|by)/i
+const banned = /claude|anthropic|co-authored-by|generated (with|by)|orchestrify/i
 // The agent may have made several commits, so the banned check must read every
 // message it created, never just the tip — a clean later commit would hide a
 // banned trailer beneath it. One command returns both the tip message (the
@@ -331,7 +331,7 @@ const commitItem = async (wt, id, title, extraLines = []) => {
 // ---------- per-item pipeline: worktree → implement → review/fix loop → commit → merge ----------
 const buildItem = async item => {
   const wt = `${repoRoot}/orchestrify-${slug}-${item.id}`
-  const branch = `orchestrify/${slug}-${item.id}`
+  const branch = `${integrationBranch}-${item.id}`
   // Single leaf segment (…-W1, not …/W1): a git ref cannot be both a file and a directory.
   // A blocked item keeps its worktree across runs, so a follow-up run resumes it
   // here rather than failing on the collision.

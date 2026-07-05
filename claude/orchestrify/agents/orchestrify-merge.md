@@ -14,7 +14,9 @@ Your task message may include a `Status task:` line. Execute it exactly as writt
 
 Work EXCLUSIVELY in `<integration-worktree>`. Never touch the user's worktrees.
 
-Run: `git merge --no-ff <item-branch>`
+Run: `git merge --no-ff <item-branch> -m "merge <ID>: <title>"`
+
+Always pass `-m` — git's default merge subject embeds the branch name (`Merge branch '<item-branch>'`), which is meaningless once the branch is deleted and must never be relied on. Your own wording is fine; describe the item, never the branch.
 
 If there are conflicts, resolve them yourself. Your sources of truth, in order: the Interfaces section of `<run-dir>/spec.md`, then the plan files of BOTH sides of the conflict under `<run-dir>/plans/` (the Deviations sections explain why overlapping changes exist). Preserve the intent of both work items; when the two sides are genuinely incompatible — not textually, but in what they mean — abort the merge and report instead of guessing.
 
