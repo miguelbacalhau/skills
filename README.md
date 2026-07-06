@@ -28,6 +28,11 @@ Three skills take a feature from rough idea to a branch you land yourself:
 (`/orca:run` is orca's feature run — not Claude Code's built-in `/run` skill,
 which launches the project's app; the namespace keeps them apart.)
 
+A fourth skill, **`/orca:config`**, is optional tuning: per-repository
+overrides for which Claude model and reasoning effort each stage agent runs
+with, written to `.orca/config.json` and picked up by the next run. Without
+it, every stage uses the defaults from its agent definition.
+
 Two design choices do most of the work:
 
 - **Double isolation.** Every stage (spec, plan, implement, review, fix,
@@ -48,7 +53,7 @@ Two design choices do most of the work:
 |------|----------|
 | `.claude-plugin/plugin.json` | The plugin manifest (`orca`). |
 | `.mcp.json` | Bundled codex MCP server — the global PATH `codex` binary, never npm. |
-| `skills/brief/`, `skills/init/`, `skills/run/` | The three skills. `run/scripts/` holds the pre-flight and the Workflow-tool work loop. |
+| `skills/brief/`, `skills/init/`, `skills/run/`, `skills/config/` | The four skills. `run/scripts/` holds the pre-flight and the Workflow-tool work loop. |
 | `agents/` | The eight stage agents (`spec`, `plan`, `implement`, `review`, `fix`, `commit`, `merge`, `integrate`), namespaced as `orca:<stage>` when the plugin is loaded. |
 
 ## Install

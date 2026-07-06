@@ -22,6 +22,11 @@
 //                     (created by the main conversation before launch), updated
 //                     by the stage agents for live display — absent, the item
 //                     simply gets no status lines
+//   agents            optional { <stage>: { model?, effort? } } — per-stage
+//                     overrides from <repo-root>/.orca/config.json (written by
+//                     the orca:config skill, read by the run skill at launch),
+//                     applied on top of each stage agent's own frontmatter
+//                     defaults; an absent stage or field keeps the default
 // }
 //
 // Review prompts are not inputs: the orca:review agent carries the
@@ -84,6 +89,55 @@ if (badTaskIds.length)
 if (items.some(i => i.id === 'integration'))
   throw new Error('invalid work breakdown: "integration" is a reserved item id')
 const integrationWt = `${repoRoot}/orca-${slug}`
+
+// Per-stage model/effort overrides (args.agents). Only the seven
+// workflow-spawned stages are tunable — spec is spawned conversationally
+// before launch — and the internal helpers (the sh relay, reconcile,
+// escalate) keep their fixed models: their cost/judgment profile is part of
+// the loop's design, not a per-repo preference. Validated at launch like the
+// rest of args: a typo'd stage or model must fail here, not surface mid-run
+// as a dead agent call.
+const TUNABLE = ['plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integrate']
+// 'spec' is a valid config key — the run skill passes the config block
+// verbatim — but it is applied conversationally at spec-spawn time, before
+// this workflow exists; here it is validated and otherwise ignored.
+const STAGES = ['spec', ...TUNABLE]
+// These three lists must stay in lockstep with skills/config/SKILL.md Step 3,
+// the write-time validator — a value accepted there but rejected here bricks
+// every launch until the config file is hand-edited.
+const MODELS = ['haiku', 'sonnet', 'opus', 'fable']
+const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
+let agentCfg = parsedArgs.agents ?? {}
+if (typeof agentCfg === 'string') {
+  try { agentCfg = JSON.parse(agentCfg) } catch { /* fall through to the object check */ }
+}
+if (typeof agentCfg !== 'object' || agentCfg === null || Array.isArray(agentCfg))
+  throw new Error(`args.agents, when present, must be an object keyed by stage (got ${JSON.stringify(agentCfg)})`)
+for (const [stage, cfg] of Object.entries(agentCfg)) {
+  if (!STAGES.includes(stage))
+    throw new Error(`args.agents.${stage}: unknown stage — configurable stages are ${STAGES.join(', ')}`)
+  if (typeof cfg !== 'object' || cfg === null || Array.isArray(cfg))
+    throw new Error(`args.agents.${stage} must be an object with optional model/effort (got ${JSON.stringify(cfg)})`)
+  const badKeys = Object.keys(cfg).filter(k => k !== 'model' && k !== 'effort')
+  if (badKeys.length)
+    throw new Error(`args.agents.${stage}: unknown key(s) ${badKeys.join(', ')} — only model and effort`)
+  if (cfg.model !== undefined && !MODELS.includes(cfg.model))
+    throw new Error(`args.agents.${stage}.model must be one of ${MODELS.join(', ')} (got ${JSON.stringify(cfg.model)})`)
+  if (cfg.effort !== undefined && !EFFORTS.includes(cfg.effort))
+    throw new Error(`args.agents.${stage}.effort must be one of ${EFFORTS.join(', ')} (got ${JSON.stringify(cfg.effort)})`)
+  if (stage === 'spec' && cfg.effort !== undefined)
+    throw new Error('args.agents.spec.effort is not supported — the spec agent is spawned conversationally, where only model can be overridden')
+}
+// Merge overrides into agent() opts only when set: a run with no config keeps
+// its opts byte-identical to pre-config journals, so resumes still replay.
+const tuned = (stage, opts) => {
+  const cfg = agentCfg[stage]
+  if (!cfg) return opts
+  const out = { ...opts }
+  if (cfg.model) out.model = cfg.model
+  if (cfg.effort) out.effort = cfg.effort
+  return out
+}
 
 // ---------- structured-output schemas ----------
 const MERGE ={ type: 'object', additionalProperties: false, required: ['merged', 'detail'],
@@ -235,8 +289,8 @@ const review = async (id, worktree, round, mode, ownedFiles = []) => {
        mode === 'item' ? `Owned files: ${ownedFiles.join(', ') || 'the files its plan names'}` : '',
        status]
         .filter(Boolean).join('\n'),
-      { agentType: 'orca:review', schema: REVIEW,
-        label: `review:${id}#${round}${attempt > 1 ? '~retry' : ''}`, phase: 'Review' }))
+      tuned('review', { agentType: 'orca:review', schema: REVIEW,
+        label: `review:${id}#${round}${attempt > 1 ? '~retry' : ''}`, phase: 'Review' })))
     if (r === null || r === undefined) { lastReason = 'review agent was skipped or died'; continue }
     if (!r.written) { lastReason = r.reason || 'review agent reported written=false with no reason'; continue }
     return { total: r.total, criticalOrHigh: r.criticalHigh }
@@ -267,7 +321,7 @@ const planItem = i => agent(
    `Owned files: ${i.files.join(', ')}`,
    `Integration worktree: ${integrationWt}`,
    statusLine(i, 'planning')].filter(Boolean).join('\n'),
-  { agentType: 'orca:plan', label: `plan:${i.id}`, phase: 'Plan' })
+  tuned('plan', { agentType: 'orca:plan', label: `plan:${i.id}`, phase: 'Plan' }))
 
 // Commit with the attribution rule enforced against the repository itself, not
 // the agent's self-report: the actual `git log` message is what gets checked.
@@ -297,7 +351,7 @@ const commitItem = async (wt, id, title, extraLines = []) => {
        attempt > 1 ? 'A previous message violated the attribution rule; describe only the change itself.' : '',
        status]
         .filter(Boolean).join('\n'),
-      { agentType: 'orca:commit', label: `commit:${id}#${attempt}`, phase: 'Merge' }),
+      tuned('commit', { agentType: 'orca:commit', label: `commit:${id}#${attempt}`, phase: 'Merge' })),
       `commit:${id}#${attempt}`)
     const now = await head(attempt)
     if (now === base) {
@@ -358,7 +412,7 @@ const buildItem = async item => {
     [`Worktree: ${wt}`, `Run directory: ${runDir}`,
      `Item: ${item.id} — ${item.title}`, `Owned files: ${item.files.join(', ')}`,
      statusLine(item, 'implementing')].filter(Boolean).join('\n'),
-    { agentType: 'orca:implement', label: `implement:${item.id}`, phase: 'Build', schema: IMPLEMENT }),
+    tuned('implement', { agentType: 'orca:implement', label: `implement:${item.id}`, phase: 'Build', schema: IMPLEMENT })),
     `implement:${item.id}`)
   // "I could not implement this as specified" is a signal, not noise — without
   // this gate an untouched worktree sails through review (empty diff, zero
@@ -373,7 +427,7 @@ const buildItem = async item => {
       must(await agent(
         [`Worktree: ${wt}`, `Run directory: ${runDir}`, `Item: ${item.id} — ${item.title}`,
          statusLine(item, `fixing #${round}`)].filter(Boolean).join('\n'),
-        { agentType: 'orca:fix', label: `fix:${item.id}#${round}`, phase: 'Review' }),
+        tuned('fix', { agentType: 'orca:fix', label: `fix:${item.id}#${round}`, phase: 'Review' })),
         `fix:${item.id}#${round}`)
       const verdict = await review(item.id, wt, round, 'item', item.files)
       if (verdict.criticalOrHigh === 0) break
@@ -398,7 +452,7 @@ const buildItem = async item => {
        statusLine(item, 'merging', ' After the merge succeeds — only if you will report merged=true — ' +
          'call TaskUpdate once more on the same task with {status: "completed"}; the same skip-on-failure rule applies.')]
         .filter(Boolean).join('\n'),
-      { agentType: 'orca:merge', label: `merge:${item.id}`, phase: 'Merge', schema: MERGE }),
+      tuned('merge', { agentType: 'orca:merge', label: `merge:${item.id}`, phase: 'Merge', schema: MERGE })),
       `merge:${item.id}`)
     // The merge agent's commit message is repo state its schema never returns —
     // apply the same attribution backstop as commitItem. Inside the serialized
@@ -678,7 +732,7 @@ if (shipped.length) {
   try {
     integration = must(await agent(
       [`Integration worktree: ${integrationWt}`, `Run directory: ${runDir}`].join('\n'),
-      { agentType: 'orca:integrate', label: 'integration-verify', schema: INTEGRATION }),
+      tuned('integrate', { agentType: 'orca:integrate', label: 'integration-verify', schema: INTEGRATION })),
       'integration-verify')
   } catch (err) {
     // The run result must survive a dead verifier: hours of merged work stay
@@ -698,7 +752,7 @@ if (shipped.length) {
           [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,
            `Item: integration — fixes applied during integration verification`,
            `There is no plan file for this item; the spec is the reference.`].join('\n'),
-          { agentType: 'orca:fix', label: 'fix:integration', phase: 'Review' }),
+          tuned('fix', { agentType: 'orca:fix', label: 'fix:integration', phase: 'Review' })),
           'fix:integration')
     } catch (err) {
       const reason = String((err && err.message) || err)
