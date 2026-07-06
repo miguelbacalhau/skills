@@ -1,0 +1,6 @@
+{
+  "name": "orca",
+  "version": "0.1.0",
+  "description": "Autonomous multi-agent feature development: brief → init → run.",
+  "author": { "name": "Miguel Bacalhau" }
+}

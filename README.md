@@ -1,92 +1,79 @@
-# Agent Skills
+# orca
 
-Skills for running autonomous, multi-agent feature development with AI coding
-agents. The same workflow ships in two implementations — one for
-[Claude Code](https://claude.com/claude-code) (`claude/`) and one for
-[Codex](https://openai.com/codex/) (`codex/`) — so either CLI can drive it.
+A [Claude Code](https://claude.com/claude-code) plugin for autonomous,
+multi-agent feature development: capture intent as a brief, set the repository
+up once, then let a deterministic workflow drive the feature from idea to a
+committed integration branch.
 
 ## The workflow
 
-Three skills take a feature from rough idea to a committed integration branch:
+Three skills take a feature from rough idea to a branch you land yourself:
 
-1. **briefify** — an interactive interview that sharpens a feature idea into a
-   durable brief file (`.orchestrify/briefs/<timestamp>-<slug>.md`): outcome,
-   features, non-goals, constraints. Capturing intent is deliberately split
-   from execution, so the conversation can take as many rounds as it needs.
-2. **initify** — one-time, consent-per-step setup that makes a repository pass
-   orchestrify's pre-flight: the bare-repo-with-worktrees layout, the
-   cross-model reviewer (the global codex binary registered as a per-project
-   MCP server for Claude Code runs; the Claude CLI plus GNU timeout for Codex
-   runs), and the bundled subagent definitions.
-3. **orchestrify** — the autonomous run. It discovers the brief, confirms it
+1. **`/orca:brief <idea>`** — an interactive interview that sharpens a feature
+   idea into a durable brief file (`.orca/briefs/<timestamp>-<slug>.md`):
+   outcome, features, non-goals, constraints, doubt rule. Capturing intent is
+   deliberately split from execution, so the conversation can take as many
+   rounds as it needs.
+2. **`/orca:init`** — one-time, consent-per-step setup that makes a repository
+   pass the run's pre-flight: the bare-repo-with-worktrees layout (converting
+   an existing checkout while preserving untracked files), plus the Codex CLI
+   checks for the cross-model reviewer.
+3. **`/orca:run`** — the autonomous run. It discovers the brief, confirms it
    once, writes a spec with a dependency-ordered work breakdown, then executes
    a deterministic work loop: each item is planned and implemented in its own
    git worktree, reviewed, fixed, committed, and serially merged into an
    integration branch that is finally verified against the spec. The
-   deliverable is a branch the user lands themselves.
+   deliverable is a `feature/<slug>` branch the user lands themselves.
+
+(`/orca:run` is orca's feature run — not Claude Code's built-in `/run` skill,
+which launches the project's app; the namespace keeps them apart.)
 
 Two design choices do most of the work:
 
-- **Double isolation.** Every stage (spec, plan, implement, fix, commit,
-  merge, integrate) runs in a dedicated subagent with its own context window,
-  and every work item gets its own worktree off a shared bare repository.
-  Parallel items can never corrupt each other's files — overlap surfaces as an
-  explicit merge conflict, resolved by a merge agent holding both plans.
-- **Cross-model review.** Each implementation is reviewed by the *other*
-  model: Claude Code runs drive Codex through its MCP server as the
-  independent reviewer, and Codex runs use Claude — an unbiased second
-  opinion before anything is committed.
+- **Double isolation.** Every stage (spec, plan, implement, review, fix,
+  commit, merge, integrate) runs in a dedicated subagent with its own context
+  window, and every work item gets its own worktree off a shared bare
+  repository. Parallel items can never corrupt each other's files — overlap
+  surfaces as an explicit merge conflict, resolved by a merge agent holding
+  both plans.
+- **Cross-model review.** Claude implements; [Codex](https://openai.com/codex/)
+  reviews. The plugin bundles an MCP registration for the global `codex`
+  binary (`codex mcp-server`), and a dedicated review agent drives it
+  adversarially over each item's diff before anything is committed — an
+  independent second opinion from a different model family.
 
-## Repository layout
+## Layout
 
 | Path | Contents |
 |------|----------|
-| `claude/` | Claude Code skills. `orchestrify/` bundles subagent definitions (`agents/*.md`, the Codex review stage among them) and scripts (pre-flight, the Workflow-tool work loop). |
-| `codex/` | Codex skills. `orchestrify/` bundles agent config (`agents/openai.yaml`) and per-stage reference prompts (`references/*.md`). |
-| `install-*.sh` / `uninstall-*.sh` | Symlink installers for each implementation. |
+| `.claude-plugin/plugin.json` | The plugin manifest (`orca`). |
+| `.mcp.json` | Bundled codex MCP server — the global PATH `codex` binary, never npm. |
+| `skills/brief/`, `skills/init/`, `skills/run/` | The three skills. `run/scripts/` holds the pre-flight and the Workflow-tool work loop. |
+| `agents/` | The eight stage agents (`spec`, `plan`, `implement`, `review`, `fix`, `commit`, `merge`, `integrate`), namespaced as `orca:<stage>` when the plugin is loaded. |
 
 ## Install
 
-Skills are installed as symlinks, so the checkout stays the source of truth
-and edits take effect immediately.
-
-### Claude Code
+For local development, load the checkout directly:
 
 ```bash
-./install-claude-skills.sh
+claude --plugin-dir /path/to/this/repo
 ```
 
-Links `claude/*` into `$HOME/.claude/skills`, and each skill's bundled
-`agents/*.md` into `$HOME/.claude/agents` so the harness can load the
-subagents. Use `--dry-run` to preview, `--target DIR` / `--agents-target DIR`
-to install elsewhere, and `--force` to replace existing targets. Remove with:
+Distribution through a plugin marketplace is the eventual install story; it is
+not set up yet.
 
-```bash
-./uninstall-claude-skills.sh
-```
+Requirements: the Codex CLI installed globally (never via npm — use
+`brew install codex` or the release binaries) and authenticated
+(`codex login`); a repository in the bare-with-worktrees layout, which
+`/orca:init` sets up.
 
-### Codex
+## Migrating from the pre-plugin skills
 
-```bash
-./install-codex-skills.sh
-```
+This repository previously shipped the same workflow as symlink-installed
+skills named `briefify`/`initify`/`orchestrify` (plus a Codex CLI variant,
+now scrapped). If you used those:
 
-Links `codex/*` into `${CODEX_HOME:-$HOME/.codex}/skills`. Same
-`--dry-run` / `--target DIR` / `--force` options. Remove with:
-
-```bash
-./uninstall-codex-skills.sh
-```
-
-## Usage
-
-In either CLI, from a repository you want to work on:
-
-```
-/briefify <idea>      # interview → brief file
-/initify              # first time only: repo layout + tooling
-/orchestrify          # autonomous run from the waiting brief
-```
-
-Orchestrify refuses to start without a brief and validates the repository
-layout up front, so the skills naturally enforce their own ordering.
+- Remove the old symlinks from `~/.claude/skills` and `~/.claude/agents`.
+- Queued briefs migrate with `mv .orchestrify .orca` at the repo root.
+- In-flight pre-migration runs cannot resume under the plugin — clean up any
+  leftover `orchestrify-*` worktrees and start fresh from a new brief.
