@@ -1,0 +1,12 @@
+{
+  "name": "orca",
+  "description": "Marketplace for the orca plugin — autonomous multi-agent feature development.",
+  "owner": { "name": "Miguel Bacalhau" },
+  "plugins": [
+    {
+      "name": "orca",
+      "source": "./",
+      "description": "Autonomous multi-agent feature development: brief → init/doctor → run."
+    }
+  ]
+}

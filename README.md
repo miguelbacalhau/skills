@@ -56,13 +56,31 @@ Everything else — the nine stage agents and the codex MCP server registration 
 
 ## Installation
 
-For local development, load the checkout directly:
+This repository hosts its own plugin marketplace (`.claude-plugin/marketplace.json`), so installing is two commands inside Claude Code:
+
+```
+/plugin marketplace add miguelbacalhau/orca
+/plugin install orca@orca
+```
+
+The install persists across sessions. Updates are manual by default for third-party marketplaces — pull new versions with `/plugin marketplace update orca`, or toggle auto-update in the `/plugin` → Marketplaces UI. Removal is symmetric: `/plugin marketplace remove orca` uninstalls the marketplace and the plugin in one step.
+
+Teams can make the install declarative instead: commit this to the project's `.claude/settings.json`, and Claude Code prompts each teammate to install the marketplace and pre-enables the plugin when they trust the workspace:
+
+```json
+{
+  "extraKnownMarketplaces": {
+    "orca": { "source": { "source": "github", "repo": "miguelbacalhau/orca" } }
+  },
+  "enabledPlugins": { "orca@orca": true }
+}
+```
+
+For local development on the plugin itself, load a checkout directly for a single session:
 
 ```bash
 claude --plugin-dir /path/to/this/repo
 ```
-
-Distribution through a plugin marketplace is the eventual install story; it is not set up yet.
 
 MCP servers load at session start, so after installing or enabling the plugin, **start a fresh session** before running — when the reviewer is codex, `/orca:run` verifies live that the codex MCP tool resolves and stops if it does not.
 
