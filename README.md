@@ -278,7 +278,7 @@ The tradeoff is real and `/orca:run` states it before starting: bypass mode disa
 
 ## Interruption, resume, and cleanup
 
-Every agent call in the work loop is journaled, and the workflow `runId` is persisted to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time `agents` block when one was passed) the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation.
+Every agent call in the work loop is journaled, and the workflow `runId` is persisted to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time reviewer as `**Workflow reviewer:**` and the launch-time `agents` block when one was passed) the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation. A resume replays those recorded values, never the current `.orca/config.json`.
 
 - **Interrupted run** (session death, kill, harness restart): re-invoke `/orca:run`'s workflow with the same script and args plus `resumeFromRunId`, rebuilt from `spec.md` — the skill knows this procedure; you just ask it to resume. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Never re-run stages conversationally.
 - **Blocked items** keep their worktree and branch deliberately — the report lists them for a follow-up run.
