@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "codex": {
+    "orca-codex": {
       "command": "codex",
       "args": ["mcp-server"]
     }

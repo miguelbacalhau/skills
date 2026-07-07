@@ -36,7 +36,7 @@
 // }
 //
 // Review prompts are not inputs: the reviewer agent (orca:review-codex driving
-// Codex through the project-registered codex MCP server, or orca:review-claude
+// Codex through the plugin-bundled orca-codex MCP server, or orca:review-claude
 // reviewing itself) carries the adversarial review contract in its own
 // definition, receiving only the run directory, artifact paths, and owned
 // files — nothing has to be written into <runDir>/reviews/ before this
@@ -284,7 +284,7 @@ const block = (id, reason) => {
 }
 
 // One review pass by the run's configured reviewer: with codex, an
-// orca:review-codex agent drives Codex through the project-registered codex
+// orca:review-codex agent drives Codex through the plugin-bundled orca-codex
 // MCP server (its own
 // definition carries the review template and the retry rules for transient
 // failures and timeouts) and writes the findings JSON verbatim; with claude,
@@ -302,7 +302,9 @@ const review = async (id, worktree, round, mode, ownedFiles = []) => {
   const archive = `${runDir}/reviews/${id}-${reviewer}.round${round}.json`
   // The integration pseudo-item has no entry in `items`, so the find misses
   // and the status line stays empty — no special-casing.
-  const status = statusLine(items.find(i => i.id === id), `review #${round}`)
+  // Rounds are 0-indexed internally; the label is 1-based because the subject
+  // is user-visible ("review #0" reads like a bug).
+  const status = statusLine(items.find(i => i.id === id), `review #${round + 1}`)
   let lastReason
   for (let attempt = 1; attempt <= 2; attempt++) {
     const call = () => agent(
@@ -331,13 +333,25 @@ const review = async (id, worktree, round, mode, ownedFiles = []) => {
 // the agent to proceed on failure, and an item without a taskId (old resume,
 // direct launch, the integration pseudo-item) gets no line — which also keeps
 // taskId-less prompts byte-identical to the pre-taskId journal keys.
+const subjectOf = item => `${item.id} — ${item.title}`
 const statusLine = (item, stage, extra = '') => {
   if (!item || !item.taskId) return ''
-  const fields = stage === 'planning'
-    ? `{status: "in_progress", activeForm: "${item.id}: planning"}`
-    : `{activeForm: "${item.id}: ${stage}"}`
+  // The stage rides on the subject (" · implementing"): the collapsed task
+  // panel renders only subjects, so activeForm alone never reaches the user.
+  const subject = JSON.stringify(`${subjectOf(item)} · ${stage}`)
+  // Every stage reasserts in_progress (idempotent when already correct): if
+  // an earlier agent wrongly ticked the task completed, the next stage's
+  // first action heals it instead of leaving the row done until run-end
+  // reconciliation.
+  const fields = `{status: "in_progress", subject: ${subject}, activeForm: "${item.id}: ${stage}"}`
+  // Merge passes its completion grant as `extra`; every other stage is
+  // mid-pipeline, so its line forbids completing the task — without the ban,
+  // a stage agent's end-of-work habit ticks the item done while later
+  // stages still run.
+  const tail = extra ||
+    ' Never set this task\'s status to "completed" — later stages of this item still run; only the merge stage completes it.'
   return `Status task: as your FIRST action, call TaskUpdate on task #${item.taskId} with ${fields}. ` +
-    `If the call fails or the tool is missing, skip it and proceed.${extra}`
+    `If the call fails or the tool is missing, skip it and proceed.${tail}`
 }
 
 const planItem = i => agent(
@@ -475,7 +489,8 @@ const buildItem = async item => {
        `Item: ${item.id} — ${item.title}`,
        `Item branch: ${branch}`, `Integration branch: ${integrationBranch}`,
        statusLine(item, 'merging', ' After the merge succeeds — only if you will report merged=true — ' +
-         'call TaskUpdate once more on the same task with {status: "completed"}; the same skip-on-failure rule applies.')]
+         `call TaskUpdate once more on the same task with {status: "completed", subject: ${JSON.stringify(subjectOf(item))}, activeForm: "${item.id}: merged"}; ` +
+         'the same skip-on-failure rule applies.')]
         .filter(Boolean).join('\n'),
       tuned('merge', { agentType: 'orca:merge', label: `merge:${item.id}`, phase: 'Merge', schema: MERGE })),
       `merge:${item.id}`)

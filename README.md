@@ -281,8 +281,10 @@ A present `reviewer` key **pins** the choice; an absent key means each launch **
 **Bundled `.mcp.json`** — registers the codex MCP server as the global PATH binary, nothing else:
 
 ```json
-{ "mcpServers": { "codex": { "command": "codex", "args": ["mcp-server"] } } }
+{ "mcpServers": { "orca-codex": { "command": "codex", "args": ["mcp-server"] } } }
 ```
+
+The server is deliberately named `orca-codex`, not `codex`, so it can never collide with a user's own `codex` registration. A harsher failure mode has nothing to do with names: as of Claude Code 2.1.202, a project that carries any MCP config of its own — a `.mcp.json` at the repo root, or local-scope servers from `claude mcp add` — loads **none** of a plugin's bundled MCP servers (upstream bug; verified with installed plugins and `--plugin-dir` alike). The live MCP gate and `/orca:doctor` both diagnose it; the fix is removing the project-level registration (a leftover `codex` entry is redundant — the plugin bundles the server) or pinning `reviewer=claude` until the project's own MCP servers can coexist with plugins.
 
 ## Permissions and autonomy
 
@@ -313,7 +315,7 @@ Every agent call in the work loop is journaled, and the workflow `runId` is pers
 | `CODEX: FAIL: MCP_TOOL_TIMEOUT not set` | Run `/orca:doctor` to write it into a settings env block, then start a fresh session. |
 | Run used the Claude reviewer unexpectedly | The reviewer key is absent and codex wasn't detected — missing or below the minimum version. Fix codex via `/orca:doctor`, or pin `reviewer=codex` via `/orca:config` so a broken codex fails the pre-flight loudly instead. |
 | `REVIEWER: FAIL: invalid reviewer` | The `reviewer` key in `.orca/config.json` is not `codex`/`claude` (or appears twice). Fix it with `/orca:config` — the pre-flight never guesses. |
-| `/orca:run` says the codex MCP tool doesn't resolve | MCP servers load at session start. Check the plugin is installed and enabled, then start a fresh session in the project. |
+| `/orca:run` says the codex MCP tool doesn't resolve | Two causes. If the project has any MCP config of its own (a `.mcp.json` at the repo root, or local-scope servers — `claude mcp list` shows both), a Claude Code bug (as of 2.1.202) loads none of the plugin's bundled MCP servers: remove the redundant registration, or pin `reviewer=claude` if the project's own servers must stay. Otherwise check the plugin is installed and enabled — MCP servers load at session start, so the session may simply predate the install or enablement. Either way, start a fresh session in the project. |
 | `/orca:run` says the harness has no Workflow tool | The work loop needs a Claude Code harness with workflows; there is no conversational fallback. |
 | Run pauses on a permission prompt | The session wasn't in `bypassPermissions` mode. Enable it (Shift+Tab) and resume via the journal rather than restarting. |
 | `/orca:run` finds no brief | Runs start only from a brief. Run `/orca:brief <idea>` first; `/orca:run` discovers it automatically. |
