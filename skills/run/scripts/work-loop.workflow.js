@@ -7,10 +7,11 @@
 // the conversational loop enforced with prose is code here: a completion-driven
 // scheduler (an item launches the moment its own dependencies merge — it never
 // waits for an unrelated sibling), the 2-round fix cap, the commit-attribution
-// check verified against `git log` itself, the 2-slot Codex review throttle,
-// and the serialized merge queue with a merge-abort safety net. Resume comes
-// from the workflow journal (`resumeFromRunId`); the token ceiling comes from
-// `budget`.
+// check verified against `git log` itself, the 2-slot review throttle (codex
+// reviews only — they contend for one codex auth; claude reviews ride the
+// normal concurrency cap), and the serialized merge queue with a merge-abort
+// safety net. Resume comes from the workflow journal (`resumeFromRunId`); the
+// token ceiling comes from `budget`.
 //
 // args: {
 //   runDir            .orca/<timestamp>-<slug> — spec.md, plans/, reviews/ (absolute)
@@ -27,14 +28,20 @@
 //                     the orca:config skill, read by the run skill at launch),
 //                     applied on top of each stage agent's own frontmatter
 //                     defaults; an absent stage or field keeps the default
+//   reviewer          'codex' | 'claude' — which independent reviewer this run
+//                     uses. REQUIRED: the run skill resolves it before launch
+//                     (pinned in .orca/config.json, else detected from the
+//                     preflight); this script never detects — it has no shell
+//                     and must stay deterministic for resume
 // }
 //
-// Review prompts are not inputs: the orca:review agent carries the
-// static adversarial template in its own definition and drives Codex through
-// the project-registered codex MCP server, substituting only the run
-// directory, plan path, and owned files — nothing has to be written into
-// <runDir>/reviews/ before this workflow starts, and there is no review
-// script or shell relay anywhere in the review path.
+// Review prompts are not inputs: the reviewer agent (orca:review-codex driving
+// Codex through the project-registered codex MCP server, or orca:review-claude
+// reviewing itself) carries the adversarial review contract in its own
+// definition, receiving only the run directory, artifact paths, and owned
+// files — nothing has to be written into <runDir>/reviews/ before this
+// workflow starts, and there is no review script or shell relay anywhere in
+// the review path.
 
 export const meta = {
   name: 'orca-work-loop',
@@ -42,7 +49,7 @@ export const meta = {
   phases: [
     { title: 'Plan', detail: 'planners per readiness wave, then cross-plan reconciliation' },
     { title: 'Build', detail: 'worktree setup and implementation, pipelined per item' },
-    { title: 'Review', detail: 'Codex review and fix rounds (max 2), throttled to 2 concurrent reviews' },
+    { title: 'Review', detail: 'independent review (codex or claude per config) and fix rounds (max 2)' },
     { title: 'Merge', detail: 'commit, then serialized merges into the integration branch' },
     { title: 'Integrate', detail: 'full-feature verification in the integration worktree' },
   ],
@@ -89,6 +96,14 @@ if (badTaskIds.length)
 if (items.some(i => i.id === 'integration'))
   throw new Error('invalid work breakdown: "integration" is a reserved item id')
 const integrationWt = `${repoRoot}/orca-${slug}`
+
+// Which independent reviewer this run uses. Required and pre-resolved: the run
+// skill defaults an absent config key via the preflight's detection before
+// launch, so the value here is always explicit — a resume must replay the
+// launch-time reviewer, never re-detect.
+const reviewer = parsedArgs.reviewer
+if (reviewer !== 'codex' && reviewer !== 'claude')
+  throw new Error(`args.reviewer must be "codex" or "claude" (got ${JSON.stringify(reviewer)}) — the run skill resolves it before launch`)
 
 // Per-stage model/effort overrides (args.agents). Only the seven
 // workflow-spawned stages are tunable — spec is spawned conversationally
@@ -223,7 +238,9 @@ const shMarked = async (cmd, label, ph) => {
 // Single-quote a value into a relayed shell command.
 const sq = s => s.replace(/'/g, `'\\''`)
 
-// Codex reviews contend for one Codex auth — cap concurrency at 2 (SKILL: review throttling).
+// Codex reviews contend for one Codex auth — cap concurrency at 2 (SKILL:
+// review throttling). Codex-only: claude reviews have no shared auth to
+// contend for and ride the workflow's normal concurrency cap.
 const reviewSlots = { free: 2, queue: [] }
 const withReviewSlot = async fn => {
   if (reviewSlots.free > 0) reviewSlots.free--
@@ -266,36 +283,44 @@ const block = (id, reason) => {
   log(`${id} blocked: ${reason}`)
 }
 
-// One review pass: a single orca:review agent drives Codex through the
-// project-registered codex MCP server (its own definition carries the review
-// template and the retry rules for transient failures and timeouts), parses
-// the result, writes the findings JSON verbatim to the artifact and the round
-// archive, counts the findings it wrote, and returns the counts via schema.
-// written=false — a dead tool call, an unparseable payload — always lands in
-// this retry loop, never in the merge gate; only written=true carries counts.
-// Two workflow-level attempts on top of the agent's internal tool-call
-// retries keeps overall resilience at the old SDK runner's level.
+// One review pass by the run's configured reviewer: with codex, an
+// orca:review-codex agent drives Codex through the project-registered codex
+// MCP server (its own
+// definition carries the review template and the retry rules for transient
+// failures and timeouts) and writes the findings JSON verbatim; with claude,
+// an orca:review-claude agent performs the review itself and writes findings
+// in the identical schema. Either way the agent writes the artifact and the
+// round archive, counts the findings it wrote, and returns the counts via
+// schema. written=false — a dead tool call, an unparseable payload, a tripped
+// self-check — always lands in this retry loop, never in the merge gate; only
+// written=true carries counts. Two workflow-level attempts on top of the
+// agent's internal retries keeps overall resilience at the old SDK runner's
+// level.
+const reviewAgentType = reviewer === 'codex' ? 'orca:review-codex' : 'orca:review-claude'
 const review = async (id, worktree, round, mode, ownedFiles = []) => {
-  const artifact = `${runDir}/reviews/${id}-codex.json`
-  const archive = `${runDir}/reviews/${id}-codex.round${round}.json`
+  const artifact = `${runDir}/reviews/${id}-${reviewer}.json`
+  const archive = `${runDir}/reviews/${id}-${reviewer}.round${round}.json`
   // The integration pseudo-item has no entry in `items`, so the find misses
   // and the status line stays empty — no special-casing.
   const status = statusLine(items.find(i => i.id === id), `review #${round}`)
   let lastReason
   for (let attempt = 1; attempt <= 2; attempt++) {
-    const r = await withReviewSlot(() => agent(
+    const call = () => agent(
       [`Worktree: ${worktree}`, `Run directory: ${runDir}`, `Item: ${id}`, `Mode: ${mode}`,
        `Artifact path: ${artifact}`, `Round archive path: ${archive}`,
        mode === 'item' ? `Owned files: ${ownedFiles.join(', ') || 'the files its plan names'}` : '',
        status]
         .filter(Boolean).join('\n'),
-      tuned('review', { agentType: 'orca:review', schema: REVIEW,
-        label: `review:${id}#${round}${attempt > 1 ? '~retry' : ''}`, phase: 'Review' })))
+      tuned('review', { agentType: reviewAgentType, schema: REVIEW,
+        label: `review:${id}#${round}${attempt > 1 ? '~retry' : ''}`, phase: 'Review' }))
+    // The slot throttle exists only for the shared codex auth — claude
+    // reviews run unthrottled.
+    const r = reviewer === 'codex' ? await withReviewSlot(call) : await call()
     if (r === null || r === undefined) { lastReason = 'review agent was skipped or died'; continue }
     if (!r.written) { lastReason = r.reason || 'review agent reported written=false with no reason'; continue }
     return { total: r.total, criticalOrHigh: r.criticalHigh }
   }
-  throw new Error(`Codex review did not complete: ${lastReason}`)
+  throw new Error(`${reviewer} review did not complete: ${lastReason}`)
 }
 
 // Live per-item display: the main conversation created one session task per
@@ -757,7 +782,7 @@ if (shipped.length) {
     } catch (err) {
       const reason = String((err && err.message) || err)
       log(`integration review did not complete — committing the fixes unreviewed (${reason})`)
-      integration.gaps.push(`integration fixes were committed without a completed Codex review: ${reason}`)
+      integration.gaps.push(`integration fixes were committed without a completed independent review: ${reason}`)
     }
     try {
       const status = await sh(

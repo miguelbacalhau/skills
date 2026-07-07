@@ -1,0 +1,55 @@
+---
+description: Diagnose and fix the machine and session tooling orca runs depend on — the Codex CLI (presence, version, authentication), the `MCP_TOOL_TIMEOUT` settings write, the reviewer resolution (codex or claude, pinned or detected), and the optional `bypassPermissions` default-mode write. Use when orca:run's pre-flight fails a machine gate, when codex install/auth/timeout problems need walking through, or when the user wants to check or understand which reviewer runs will use. Not for repository layout — the bare-repo-with-worktrees conversion is orca:init's job — and does not start runs. Interactive and consent-per-step: diagnosis is free, every write is confirmed first.
+args: <optional focus, e.g. "codex" or "timeout">
+user-invocable: true
+disable-model-invocation: true
+---
+
+# Orca: doctor
+
+Make the *machine* ready for orca runs. Repository layout is orca:init's job and stays out of scope here; everything else the pre-flight checks — the Codex CLI, its auth, the MCP tool timeout, plus the run-environment extras (`bypassPermissions`) — is this skill's. The temperament is like init's: interactive, diagnosis free, consent before every mutating step. Doctor mostly *prescribes* — codex installs come from brew or release binaries by the user's hand, and auth is inherently the user's interactive action; the only things it writes are settings blocks, each confirmed.
+
+## Step 1: Diagnose
+
+**Inside a git repository**, run orca:run's pre-flight from the project root — read-only, and its output is the work list:
+
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh
+```
+
+Report every gate in plain language: `BARE_REPO` (`PASS | FAIL`), the `REVIEWER:` line (which reviewer, pinned by `.orca/config.json` or detected from the machine), and `CODEX` (`PASS | FAIL | SKIPPED` — skipped means the resolved reviewer is claude and the codex checks deliberately did not run). A `REVIEWER: FAIL` means the config key is invalid — point at orca:config; nothing here edits that file.
+
+**Outside a git repository**, run in machine-only mode: say up front that the layout gate and reviewer pinning are per-repo and unchecked here. Probe codex directly with the same checks the pre-flight runs — binary on PATH, `codex --version` against the minimum version the preflight names (read `codex_min_version` from `${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh` rather than reciting a remembered one), `codex login status`, and `MCP_TOOL_TIMEOUT` in a settings env block. Treat the resolved reviewer as detected-only, offer the timeout write to `~/.claude/settings.json` only (there is no project settings file to offer), and skip the `bypassPermissions` offer (also per-repo).
+
+## Step 2: Route layout failures away
+
+`BARE_REPO: FAIL` is not this skill's work: point at **orca:init**, which converts interactively and preserves untracked files. Never restructure a repository from here — not even a "quick" conversion the user asks for mid-diagnosis; hand them to init where the confirmations live.
+
+## Step 3: Fix the machine gates — consent per step, reviewer-aware
+
+What there is to fix depends on the resolved reviewer:
+
+**Reviewer codex (pinned or detected).** The run's review path is the global codex binary's MCP server, so every codex gate must pass. Fix only what the diagnosis flagged, in order:
+
+- **Binary missing or stale** — codex is **never installed via npm**: no `npm i -g @openai/codex`, no vendored binary. Surface the official non-npm install (`brew install codex`, or the GitHub release binaries) and let the user run it; re-check the version after.
+- **Not authenticated** — authentication is interactive and the user's own action: suggest they run `! codex login` in this session, then verify with `! codex login status`.
+- **`MCP_TOOL_TIMEOUT` unset** — the reviewer runs through the codex MCP server the orca plugin bundles, but the timeout that governs MCP tool calls is a *client-side* env setting a plugin cannot ship: write `"MCP_TOOL_TIMEOUT": "1200000"` (~20 minutes) into the `env` block of `.claude/settings.local.json` (or the user's `~/.claude/settings.json`, their choice), merged into any existing file rather than overwriting. Not larger: the workflow retries reviews at two levels, so this value multiplies into the worst case per item; at ~20 minutes that worst case stays around 80 minutes, where 1 hour would balloon it to several hours. Caveat to state after writing: settings env loads at **session start** — a fresh session is needed before the value takes effect.
+
+**Reviewer claude (detected — codex absent).** Nothing to fix: runs will use the Claude reviewer (`orca:review-claude`), which keeps fresh-context independence — a separate agent, only the artifacts and the diff, an adversarial contract — but is same-model. Say that installing codex enables cross-model review, the stronger design: a different model family does not share the implementer's blind spots. Offer to pin either choice via **orca:config** (`reviewer=claude` to make the fallback explicit, `reviewer=codex` after installing); the write itself belongs to orca:config, not here.
+
+**Reviewer claude (pinned) with codex present.** The codex gates were skipped by choice; nothing to do. Mention that `orca:config reviewer=codex` (or `reviewer=default`) re-enables cross-model review if the pin has outlived its reason.
+
+## Step 4: Optional — offered, never defaulted
+
+For a repo where orca runs are always unattended, offer to write `"permissions": { "defaultMode": "bypassPermissions" }` into `<repo-root>/<branch>/.claude/settings.local.json`. State the tradeoff plainly: it disables the approval gate for every session opened in that worktree, not just orca runs. Declining is fine — the mode can be toggled per session with Shift+Tab instead. (Per-repo, so skipped entirely in machine-only mode.)
+
+## Step 5: Verify
+
+Re-run the pre-flight (inside a repository) or the direct codex probes (machine-only) and report gate by gate. Name what remains on the user rather than glossing it: a `codex login` not yet done, a session restart pending before the settings env loads. Close by pointing at the workflow the machine is now ready for: `/orca:brief` to capture a feature's intent, then `/orca:run` to run it — or `/orca:init` first if the layout gate is the one still failing.
+
+## Guidelines
+
+- Diagnosis is free; every write is announced and confirmed first. Binaries and auth remain the user's actions — surface the command, never run installs or logins autonomously.
+- Never touch repository layout, history, refs, or remotes — that is orca:init's territory.
+- Never edit `.orca/config.json` — pinning or clearing the reviewer belongs to orca:config; recommend it by name instead.
+- A codex gate failing while the reviewer is codex is a failure to fix, never a reason to suggest silently switching the reviewer — swapping the reviewer out from under a codex user is a decision, so it goes through orca:config with the trade-off stated.

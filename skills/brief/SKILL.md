@@ -38,7 +38,7 @@ Run orca:run's environment pre-flight now, from the project root — it ships in
 bash ${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh
 ```
 
-This is an early warning, not a gate: a `FAIL` here (no bare repo, Codex missing) is something to fix before the *run*, at leisure — it never blocks writing the brief. Report any failing gate and point at the orca:init skill, which fixes the layout and tooling gates interactively, then continue.
+This is an early warning, not a gate: a `FAIL` here is something to fix before the *run*, at leisure — it never blocks writing the brief. Report any failing gate and point at the right fixer — orca:init for the layout gate (`BARE_REPO`), orca:doctor for the machine gates (`CODEX`, an invalid `REVIEWER`) — then continue. A `CODEX: SKIPPED` line just means the run will use the Claude reviewer; nothing to fix.
 
 ## Step 3: Write the brief
 

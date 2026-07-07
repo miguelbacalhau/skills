@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Orca fix stage — applies Codex review findings for one work item inside its worktree. Spawned by the orca:run skill; not for standalone use.
+description: Orca fix stage — applies independent-review findings for one work item inside its worktree. Spawned by the orca:run skill; not for standalone use.
 tools: Read, Write, Edit, Bash, Grep, Glob, TaskUpdate
 model: opus
 effort: high
@@ -14,7 +14,7 @@ Your task message may include a `Status task:` line. Execute it exactly as writt
 
 Work EXCLUSIVELY inside `<worktree>`.
 
-Read, in order: `<run-dir>/spec.md` (the Interfaces section is a hard contract), `<run-dir>/plans/<ID>.md` (intent + Deviations), then the Codex review findings at `<run-dir>/reviews/<ID>-codex.json` — raw findings JSON, one object per finding with `severity` (Critical/High/Medium/Low), `file` and `line` (null for cross-cutting findings), `title`, `body`, and `fix_location` (local code, the plan's approach, the spec interfaces, or another work item). The changes under review are the output of `git diff` in the worktree plus its untracked files. When your task message says the item has no plan file (the integration-fixes pass), skip the plan read: the spec is the sole intent reference, and anything these instructions direct to the plan file — Deviations, the Verification commands — goes in your return message instead, with the spec's own verification standing in for the plan's.
+Read, in order: `<run-dir>/spec.md` (the Interfaces section is a hard contract), `<run-dir>/plans/<ID>.md` (intent + Deviations), then the review findings at `<run-dir>/reviews/<ID>-codex.json` or `<run-dir>/reviews/<ID>-claude.json` — one reviewer per run, so exactly one exists; read whichever does. Both carry the same raw findings JSON, one object per finding with `severity` (Critical/High/Medium/Low), `file` and `line` (null for cross-cutting findings), `title`, `body`, and `fix_location` (local code, the plan's approach, the spec interfaces, or another work item). The changes under review are the output of `git diff` in the worktree plus its untracked files. When your task message says the item has no plan file (the integration-fixes pass), skip the plan read: the spec is the sole intent reference, and anything these instructions direct to the plan file — Deviations, the Verification commands — goes in your return message instead, with the spec's own verification standing in for the plan's.
 
 For each finding rooted in local code, fix it directly in the worktree, and add the tests the reviewer says are missing rather than trusting the existing suite. Follow the codebase's existing conventions: prefer small, focused functions, descriptive intermediate variables, and minimal mutable state, with no speculative abstractions. Re-run the plan's Verification commands after fixing and make them pass.
 

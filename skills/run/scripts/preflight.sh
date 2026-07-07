@@ -3,10 +3,14 @@
 # orca pre-flight — read-only environment validation, run once during
 # Step 1 before the brief is confirmed. Run from the project root.
 #
-# Checks the two mechanical gates and prints one machine-readable line each:
+# Reads one config key — "reviewer" from ./.orca/config.json — to decide
+# whether the codex gate applies; otherwise touches nothing. Prints one
+# machine-readable line per gate:
 #   <KEY>: PASS
 #   <KEY>: FAIL: <terse remediation>
-# plus an informational TRUNK_CANDIDATE line and a final RESULT line.
+#   <KEY>: SKIPPED: <why it was not checked>   (CODEX only)
+# plus informational TRUNK_CANDIDATE and REVIEWER lines and a final RESULT
+# line.
 #
 # No AGENTS gate and no MCP-registration checks: the subagent definitions
 # and the codex MCP server registration ship inside the orca plugin, so a
@@ -42,8 +46,62 @@ else
   echo "TRUNK_CANDIDATE: ${trunk:-unknown}"
 fi
 
+# --- REVIEWER: which independent reviewer runs — pinned in config, else detected ---
+# A written "reviewer" key in ./.orca/config.json pins the choice; absent, the
+# machine decides: codex binary on PATH at >= the minimum version -> codex,
+# else claude. Detection is binary-presence-at-version ONLY — auth or timeout
+# problems on a detected/pinned codex are CODEX gate failures below, never a
+# silent downgrade to claude (that would swap the reviewer out from under a
+# codex user).
+codex_min_version="0.142.5"
+
+# Binary present at >= min version? Shared by detection and the CODEX gate.
+codex_binary_ok=0
+codex_binary_reason="codex not on PATH"
+if command -v codex >/dev/null 2>&1; then
+  codex_version="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  oldest="$(printf '%s\n%s\n' "$codex_min_version" "${codex_version:-0}" | sort -V | head -1)"
+  if [[ -n "$codex_version" && "$oldest" == "$codex_min_version" ]]; then
+    codex_binary_ok=1
+  else
+    codex_binary_reason="codex ${codex_version:-unknown} < required $codex_min_version"
+  fi
+fi
+
+# Extraction is grep-only by design: orca:config is the sole writer and emits
+# compact well-formed JSON in which "reviewer" can only be the top-level key.
+# Zero matches -> absent (detect); exactly one distinct valid value -> pinned;
+# anything else (duplicates, an unrecognized value) -> loud FAIL, never a guess.
+reviewer=""
+reviewer_provenance=""
+reviewer_invalid=0
+config_file="./.orca/config.json"
+if [[ -f "$config_file" ]]; then
+  reviewer_values="$(grep -o '"reviewer"[[:space:]]*:[[:space:]]*"[a-z]*"' "$config_file" 2>/dev/null \
+    | grep -o '"[a-z]*"$' | tr -d '"' | sort -u || true)"
+  value_count="$(printf '%s' "$reviewer_values" | grep -c . || true)"
+  if [[ "$value_count" -eq 1 && ( "$reviewer_values" == "codex" || "$reviewer_values" == "claude" ) ]]; then
+    reviewer="$reviewer_values"
+    reviewer_provenance="pinned"
+  elif [[ "$value_count" -gt 0 ]]; then
+    # Multiple distinct values or an unrecognized one — a hand-mangled file.
+    # Fail loudly, never guess; the CODEX gate is skipped as unresolvable.
+    echo "REVIEWER: FAIL: invalid reviewer in .orca/config.json — fix with orca:config"
+    fail=1
+    reviewer_invalid=1
+  fi
+fi
+if [[ -z "$reviewer" && "$reviewer_invalid" -eq 0 ]]; then
+  if [[ "$codex_binary_ok" -eq 1 ]]; then reviewer="codex"; else reviewer="claude"; fi
+  reviewer_provenance="detected"
+fi
+if [[ -n "$reviewer" ]]; then
+  echo "REVIEWER: $reviewer ($reviewer_provenance)"
+fi
+
 # --- CODEX: the cross-model reviewer is the GLOBAL codex binary's MCP server, ---
-# --- registered by the plugin's bundled .mcp.json                             ---
+# --- registered by the plugin's bundled .mcp.json — checked only when the     ---
+# --- resolved reviewer is codex                                               ---
 # Codex is never installed via npm — the only supported codex is the system
 # install on PATH (official non-npm distribution: Homebrew or the release
 # binaries). The gate checks: binary on PATH at >= the minimum version this
@@ -51,38 +109,35 @@ fi
 # env knob. The timeout check survives the plugin migration because it is a
 # CLIENT-side setting: the plugin's .mcp.json registers the server, but a
 # plugin cannot set the session env that governs MCP tool-call timeouts, so
-# it still lives in a settings env block (project or user) that orca:init
+# it still lives in a settings env block (project or user) that orca:doctor
 # writes. Nothing here can check what is LOADED in the current session —
 # the live check (does the codex MCP tool resolve?) is SKILL.md Step 1's
 # job, in the session itself.
-codex_min_version="0.142.5"
 settings_files=("./.claude/settings.local.json" "./.claude/settings.json" "$HOME/.claude/settings.json")
 codex_fail() {
   echo "CODEX: FAIL: $1"
   fail=1
 }
-if ! command -v codex >/dev/null 2>&1; then
-  codex_fail "codex not on PATH — install the Codex CLI from its official non-npm distribution (e.g. 'brew install codex'), never via npm"
+if [[ "$reviewer" == "claude" ]]; then
+  echo "CODEX: SKIPPED: reviewer is claude"
+elif [[ -z "$reviewer" ]]; then
+  echo "CODEX: SKIPPED: reviewer unresolved — fix the reviewer key first"
+elif [[ "$codex_binary_ok" -ne 1 ]]; then
+  codex_fail "$codex_binary_reason — install or upgrade the Codex CLI from its official non-npm distribution (e.g. 'brew install codex'), never via npm; orca:doctor walks this through"
+elif ! codex login status >/dev/null 2>&1 </dev/null; then
+  codex_fail "not authenticated — run 'codex login' (orca:doctor walks this through)"
 else
-  codex_version="$(codex --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
-  oldest="$(printf '%s\n%s\n' "$codex_min_version" "${codex_version:-0}" | sort -V | head -1)"
-  if [[ -z "$codex_version" || "$oldest" != "$codex_min_version" ]]; then
-    codex_fail "codex ${codex_version:-unknown} < required $codex_min_version — upgrade the system codex (never via npm)"
-  elif ! codex login status >/dev/null 2>&1 </dev/null; then
-    codex_fail "not authenticated — run 'codex login'"
-  else
-    timeout_set=0
-    for sf in "${settings_files[@]}"; do
-      [[ -f "$sf" ]] || continue
-      if grep -q '"MCP_TOOL_TIMEOUT"' "$sf"; then
-        timeout_set=1
-      fi
-    done
-    if [[ "$timeout_set" -eq 0 ]]; then
-      codex_fail "MCP_TOOL_TIMEOUT not set in a settings env block — orca:init writes it (~20 minutes); reviews would be killed at the default tool timeout"
-    else
-      echo "CODEX: PASS"
+  timeout_set=0
+  for sf in "${settings_files[@]}"; do
+    [[ -f "$sf" ]] || continue
+    if grep -q '"MCP_TOOL_TIMEOUT"' "$sf"; then
+      timeout_set=1
     fi
+  done
+  if [[ "$timeout_set" -eq 0 ]]; then
+    codex_fail "MCP_TOOL_TIMEOUT not set in a settings env block — orca:doctor writes it (~20 minutes); reviews would be killed at the default tool timeout"
+  else
+    echo "CODEX: PASS"
   fi
 fi
 
