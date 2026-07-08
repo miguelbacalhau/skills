@@ -1,6 +1,6 @@
 {
   "name": "orca",
-  "version": "0.1.0",
-  "description": "Autonomous multi-agent feature development: brief → init/doctor → run.",
+  "version": "0.2.0",
+  "description": "Autonomous multi-agent feature development: init/doctor once, then orca:feature from idea to integration branch.",
   "author": { "name": "Miguel Bacalhau" }
 }

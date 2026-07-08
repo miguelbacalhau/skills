@@ -1,6 +1,6 @@
 ---
 name: integrate
-description: Orca integration-verification stage — verifies the fully assembled feature in the integration worktree against the spec. Spawned by the orca:run skill; not for standalone use.
+description: Orca integration-verification stage — verifies the fully assembled feature in the integration worktree against the spec. Spawned by the orca work loop; not for standalone use.
 tools: Read, Write, Edit, Bash, Grep, Glob
 model: opus
 effort: high

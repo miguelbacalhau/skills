@@ -1,6 +1,6 @@
 ---
 name: commit
-description: Orca commit stage — creates one Conventional Commit for a completed work item on its item branch. Spawned by the orca:run skill; not for standalone use.
+description: Orca commit stage — creates one Conventional Commit for a completed work item on its item branch. Spawned by the orca work loop; not for standalone use.
 tools: Bash, Read, TaskUpdate
 model: haiku
 effort: low

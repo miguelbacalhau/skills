@@ -1,12 +1,12 @@
 # orca
 
-A [Claude Code](https://claude.com/claude-code) plugin for autonomous, multi-agent feature development. Capture intent as a brief, set the repository up once, then let a deterministic workflow drive the feature from idea to a committed integration branch — planned, implemented, independently reviewed, fixed, committed, merged, and verified, with the user interacting exactly once (or twice, by opt-in).
+A [Claude Code](https://claude.com/claude-code) plugin for autonomous, multi-agent feature development. Set the repository up once, then one skill takes a feature from idea to a committed integration branch: an adversarial interview captures intent as a durable brief, and a deterministic workflow drives the run — planned, implemented, independently reviewed, fixed, committed, merged, and verified, with the user interacting exactly once after the interview (or twice, by opt-in).
 
 ```text
-/orca:brief <idea>     # interview → durable brief file        (interactive)
+/orca:feature <idea>   # triage → interview/brief → spec → work loop → report
+                       # (interactive until one confirmation, autonomous after)
 /orca:init             # one-time repository layout setup      (interactive, consent per step)
 /orca:doctor           # one-time machine tooling setup        (interactive, consent per step)
-/orca:run              # brief → spec → work loop → report     (autonomous after one confirmation)
 /orca:config           # optional per-repo reviewer & model/effort tuning
 ```
 
@@ -45,7 +45,7 @@ State lives in files, never in conversation memory: the brief, the spec with its
 
 | Requirement | Detail |
 |---|---|
-| Claude Code | A harness with the **Workflow tool** (the work loop runs through it). `/orca:run` checks and refuses without it. |
+| Claude Code | A harness with the **Workflow tool** (the work loop runs through it). `/orca:feature` checks and refuses without it. |
 | Codex CLI | Required only **when the reviewer is codex** (the default wherever it is installed): the **global `codex` binary on PATH**, version **≥ 0.142.5**, authenticated via `codex login`. **Never install codex via npm** — use `brew install codex` or the official release binaries. With `reviewer=claude`, the codex rows don't apply. |
 | Repository layout | Bare-repo-with-worktrees (`.bare/` + peer worktrees). `/orca:init` sets this up, including converting an existing conventional checkout in place. |
 | git | ≥ 2.5 (worktrees); ≥ 2.42 for `worktree add --orphan` when `/orca:init` creates a brand-new repository. |
@@ -82,7 +82,7 @@ For local development on the plugin itself, load a checkout directly for a singl
 claude --plugin-dir /path/to/this/repo
 ```
 
-MCP servers load at session start, so after installing or enabling the plugin, **start a fresh session** before running — when the reviewer is codex, `/orca:run` verifies live that the codex MCP tool resolves and stops if it does not.
+MCP servers load at session start, so after installing or enabling the plugin, **start a fresh session** before running — when the reviewer is codex, `/orca:feature` verifies live that the codex MCP tool resolves and stops if it does not.
 
 ## Quick start
 
@@ -97,36 +97,48 @@ MCP servers load at session start, so after installing or enabling the plugin, *
 #     outright if you'll run with the Claude reviewer.
 /orca:doctor
 
-# 2. Capture intent. An interview: outcome, features, non-goals, constraints,
-#    doubt rule. Takes as many rounds as the idea needs; writes a brief file.
-/orca:brief add rate limiting to the public API
+# 2. The feature. An interview captures intent as a brief file — outcome,
+#    features, non-goals, constraints, doubt rule, as many rounds as the
+#    idea needs — then, after ONE confirmation, the run drives autonomously
+#    to a final report and a feature/<slug> branch. Decline the run prompt
+#    to leave the brief queued for a later /orca:feature instead.
+/orca:feature add rate limiting to the public API
 
-# 3. Run. Discovers the brief, restates it, asks for ONE confirmation,
-#    then runs autonomously to a final report and a feature/<slug> branch.
-/orca:run
-
-# 4. Land the deliverable from your own worktree.
+# 3. Land the deliverable from your own worktree.
 git merge --no-ff feature/<slug>
 ```
 
-Briefs can be queued ahead of time — everything at the top level of `.orca/briefs/` is ready and unconsumed, and a run consumes exactly one.
+Briefs can be queued ahead of time — everything at the top level of `.orca/feat-briefs/` is ready and unconsumed; a later `/orca:feature` finds them, offers to run one, and a run consumes exactly one.
 
 ## Commands
 
-### `/orca:brief <idea>`
+### `/orca:feature <idea>`
 
-An interactive interview that sharpens a rough idea into a durable brief at `.orca/briefs/<timestamp>-<slug>.md`. The brief is the *entire* intent a later run acts on — the run asks nothing beyond one confirmation — so the interview is deliberately adversarial about scope: it pushes back, hunts for unstated non-goals, and makes you resolve ambiguities now rather than leaving them for an autonomous run to guess at.
+The one feature verb — a dispatcher over `.orca` state. Triage looks at what is on disk and offers the first match, never forcing it:
+
+1. **An interrupted run** — a run directory whose `spec.md` records a workflow runId with no `report.md` beside it. Offers to resume from the journal; completed work replays instantly, only in-flight and remaining work runs live.
+2. **A queued brief** — anything at the top level of `.orca/feat-briefs/`. Offers to run one, or to interview a new idea instead.
+3. **Nothing waiting** — interviews the idea into a brief, then asks once: run it now, or leave it queued?
+
+**The interview** sharpens a rough idea into a durable brief at `.orca/feat-briefs/<timestamp>-<slug>.md`. The brief is the *entire* intent the run acts on — the run asks nothing beyond one confirmation — so the interview is deliberately adversarial about scope: it pushes back, hunts for unstated non-goals, and makes you resolve ambiguities now rather than leaving them for an autonomous run to guess at.
 
 A brief records: **outcome**, **features**, **non-goals**, **inputs & outputs**, **constraints**, plus two run-controlling choices:
 
 - **Doubt rule** — when the run hits an ambiguity, does it prefer the smaller interpretation and cut scope (`prefer-smaller-scope`, the default) or the more complete one (`prefer-complete`)?
 - **Breakdown checkpoint** — review the spec and work breakdown once before any code (`review-once`), or run straight through (`straight-through`, the default)?
 
-The brief is *what and why*, never *how*: no work breakdown, no interfaces, no file ownership — those come from the run's spec stage, grounded in real codebase exploration. Location is status: top-level briefs are ready; park unfinished ones in `.orca/briefs/drafts/`. One brief is one run's scope — two independent efforts get two briefs.
+The brief is *what and why*, never *how*: no work breakdown, no interfaces, no file ownership — those come from the run's spec stage, grounded in real codebase exploration. Location is status: top-level briefs are ready; park unfinished ones in `.orca/feat-briefs/drafts/`. One brief is one run's scope — two independent efforts get two briefs, and declining the run prompt leaves a brief queued for any later `/orca:feature`.
+
+**The run.** See [Anatomy of a run](#anatomy-of-a-run) for the full lifecycle. Interaction surface, in total:
+
+1. **One confirmation** of the restated brief (plus trunk-branch confirmation) — this authorizes everything that follows. It runs in full even when the brief was written seconds earlier in the same session: the file, not the conversation, is the authorized intent.
+2. **One optional checkpoint** — only if the brief opted in: review the spec and work breakdown before any code.
+
+After that, nothing asks you anything. Ambiguities resolve against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report, with the options you must choose between recorded. Mid-run, live per-item status shows on the session task list; the outcome lands in `report.md`.
 
 ### `/orca:init [path or clone URL]`
 
-One-time, consent-per-step setup that makes a repository pass `/orca:run`'s pre-flight. Handles three cases:
+One-time, consent-per-step setup that makes a repository pass `/orca:feature`'s pre-flight. Handles three cases:
 
 - **New repository** — bare-init plus a default-branch worktree.
 - **Clone a URL** — bare clone, fetch refspec fix (bare clones silently fetch nothing without it), default-branch worktree.
@@ -147,17 +159,6 @@ Interactive, consent-per-step machine and session tooling — the per-machine co
 It is reviewer-aware: with a detected claude reviewer (codex not installed) there is nothing to fix — it says runs will use the Claude reviewer, explains that installing codex enables the stronger cross-model review, and offers to pin either choice via `/orca:config`. With claude pinned and codex present, it notes the codex gates were skipped by choice. A codex gate failing while the reviewer is codex is always a failure to fix — never a silent switch to the other reviewer.
 
 Optionally — offered, never defaulted — it can write `bypassPermissions` as the default mode for a repo where runs are always unattended. Layout failures route the other way: `BARE_REPO: FAIL` goes to `/orca:init`.
-
-### `/orca:run`
-
-The autonomous run. See [Anatomy of a run](#anatomy-of-a-run) for the full lifecycle. Interaction surface, in total:
-
-1. **One confirmation** of the restated brief (plus trunk-branch confirmation) — this authorizes everything that follows.
-2. **One optional checkpoint** — only if the brief opted in: review the spec and work breakdown before any code.
-
-After that, nothing asks you anything. Ambiguities resolve against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report, with the options you must choose between recorded. Mid-run, live per-item status shows on the session task list; the outcome lands in `report.md`.
-
-Without a brief, `/orca:run` stops and points you at `/orca:brief` — it never interviews as a substitute. (This is orca's feature run, not Claude Code's built-in `/run` skill that launches the project's app; the namespace keeps them apart.)
 
 ### `/orca:config [assignments | reset]`
 
@@ -180,9 +181,10 @@ Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `lo
 ## Anatomy of a run
 
 ```text
-/orca:run
+/orca:feature
    │
-   ├─ 0. Discover the brief         .orca/briefs/*.md — exactly one, or ask which
+   ├─ 0. Triage                     resume an interrupted run · run a queued brief
+   │                                · or interview → brief, then run now or queue
    ├─ 1. Pre-flight + confirm       preflight.sh gates, Workflow tool, live MCP
    │                                check, bypassPermissions; ONE user confirmation
    ├─ 2. Spec (orca:spec)           read-only codebase exploration → spec.md with
@@ -198,7 +200,7 @@ Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `lo
                                     integration verification, follow-ups, landing
 ```
 
-**Pre-flight** (`skills/run/scripts/preflight.sh`, read-only, also runnable early from `/orca:brief`) prints one machine-readable line per gate: `BARE_REPO`, a `REVIEWER: codex|claude (pinned|detected)` line resolving which reviewer the run uses, `CODEX` (binary ≥ 0.142.5, authenticated, `MCP_TOOL_TIMEOUT` set — checked only when the resolved reviewer is codex, `SKIPPED` otherwise), an informational `TRUNK_CANDIDATE`, and a final `RESULT` mirrored by the exit code. On any `FAIL` the run does not start; remediation goes through `/orca:init` for the layout gate and `/orca:doctor` for the machine gates.
+**Pre-flight** (`scripts/preflight.sh`, read-only, also run early during the interview) prints one machine-readable line per gate: `BARE_REPO`, a `REVIEWER: codex|claude (pinned|detected)` line resolving which reviewer the run uses, `CODEX` (binary ≥ 0.142.5, authenticated, `MCP_TOOL_TIMEOUT` set — checked only when the resolved reviewer is codex, `SKIPPED` otherwise), an informational `TRUNK_CANDIDATE`, and a final `RESULT` mirrored by the exit code. On any `FAIL` the run does not start; remediation goes through `/orca:init` for the layout gate and `/orca:doctor` for the machine gates.
 
 **Spec** is written once, by a dedicated read-only agent, from the confirmed brief. Its two load-bearing sections: **Interfaces Between Work Items** — the contracts (type shapes, signatures, file ownership, naming) that let items build in parallel without inventing incompatible seams — and the **Work Breakdown**, which becomes the workflow's item list verbatim. If the requested scope cannot be split cleanly against the codebase, the run surfaces that and stops rather than launching against a spec known to be wrong.
 
@@ -222,17 +224,17 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
 ├── orca-<slug>/                  # integration worktree (branch feature/<slug>)
 ├── orca-<slug>-W1/               # one worktree per in-flight item (branch feature/<slug>-W1)
 └── .orca/
-    ├── config.json               # optional per-repo model/effort overrides
-    ├── briefs/                   # unconsumed briefs (drafts/ for parked ones)
-    └── YYYYMMDD-HHMMSS-<slug>/   # one directory per run
-        ├── brief.md              # the consumed brief — moved here when the run starts
-        ├── spec.md               # spec, work breakdown, Decisions log, workflow runId
-        ├── report.md             # final run report
-        ├── plans/                # one plan per item, with its Deviations section
-        └── reviews/              # raw findings JSON per review round (codex or claude)
+    ├── config.json                    # optional per-repo model/effort overrides
+    ├── feat-briefs/                   # unconsumed feature briefs (drafts/ for parked ones)
+    └── YYYYMMDD-HHMMSS-feat-<slug>/   # one directory per feature run
+        ├── brief.md                   # the consumed brief — moved here when the run starts
+        ├── spec.md                    # spec, work breakdown, Decisions log, workflow runId
+        ├── report.md                  # final run report
+        ├── plans/                     # one plan per item, with its Deviations section
+        └── reviews/                   # raw findings JSON per review round (codex or claude)
 ```
 
-Two naming namespaces, deliberately different: `orca-*` **directory** names are local scratch — the cleanup and discovery story via `git worktree list` — and never enter git; `feature/<slug>[-<ID>]` **branch** names are what lands in history and on GitHub, and carry no orca trace. `.orca/` sits outside every worktree, so its contents cannot be committed by accident.
+Two naming namespaces, deliberately different: `orca-*` **directory** names are local scratch — the cleanup and discovery story via `git worktree list` — and never enter git; `feature/<slug>[-<ID>]` **branch** names are what lands in history and on GitHub, and carry no orca trace. `.orca/` sits outside every worktree, so its contents cannot be committed by accident. Inside `.orca/`, every artifact is verb-prefixed (`feat-briefs/`, `feat-` run directories), reserving the namespace for other verbs' artifacts, so a bare `ls .orca/` reads unambiguously.
 
 ## Stage agents
 
@@ -294,13 +296,13 @@ A run only stays autonomous if the harness never raises a permission prompt: eve
 
 Enable it one of three ways: Shift+Tab in-session until the footer shows "bypass permissions" (easiest, right before the run); `claude --dangerously-skip-permissions` at launch; or `"permissions": { "defaultMode": "bypassPermissions" }` in `.claude/settings.local.json` for always-unattended repos (offered by `/orca:doctor`, never defaulted).
 
-The tradeoff is real and `/orca:run` states it before starting: bypass mode disables the approval gate for the **whole session**, not just the run — a dedicated session for the run is the clean choice. If you won't enable it, the run does not start; it would only pause partway.
+The tradeoff is real and `/orca:feature` states it before starting: bypass mode disables the approval gate for the **whole session**, not just the run — a dedicated session for the run is the clean choice. If you won't enable it now, the run does not start (it would only pause partway), but the invocation ends cleanly with the brief saved and queued — enable bypass and re-invoke `/orca:feature` when ready.
 
 ## Interruption, resume, and cleanup
 
 Every agent call in the work loop is journaled, and the workflow `runId` is persisted to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time reviewer as `**Workflow reviewer:**` and the launch-time `agents` block when one was passed) the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation. A resume replays those recorded values, never the current `.orca/config.json`.
 
-- **Interrupted run** (session death, kill, harness restart): re-invoke `/orca:run`'s workflow with the same script and args plus `resumeFromRunId`, rebuilt from `spec.md` — the skill knows this procedure; you just ask it to resume. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Never re-run stages conversationally.
+- **Interrupted run** (session death, kill, harness restart): invoke `/orca:feature` — its triage discovers the interrupted run on disk and offers the resume, re-invoking the workflow with the same script and args plus `resumeFromRunId`, rebuilt from `spec.md`. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Never re-run stages conversationally.
 - **Blocked items** keep their worktree and branch deliberately — the report lists them for a follow-up run.
 - **Abandoned run**: `git worktree list`, remove leftover `orca-*` worktrees and their `feature/<slug>*` branches. Prefer resuming.
 - **Pre-plugin runs cannot resume** under the plugin (agent types, worktree names, and journal keys all changed) — clean up their leftovers and start fresh from a new brief.
@@ -315,18 +317,19 @@ Every agent call in the work loop is journaled, and the workflow `runId` is pers
 | `CODEX: FAIL: MCP_TOOL_TIMEOUT not set` | Run `/orca:doctor` to write it into a settings env block, then start a fresh session. |
 | Run used the Claude reviewer unexpectedly | The reviewer key is absent and codex wasn't detected — missing or below the minimum version. Fix codex via `/orca:doctor`, or pin `reviewer=codex` via `/orca:config` so a broken codex fails the pre-flight loudly instead. |
 | `REVIEWER: FAIL: invalid reviewer` | The `reviewer` key in `.orca/config.json` is not `codex`/`claude` (or appears twice). Fix it with `/orca:config` — the pre-flight never guesses. |
-| `/orca:run` says the codex MCP tool doesn't resolve | Two causes. If the project has any MCP config of its own (a `.mcp.json` at the repo root, or local-scope servers — `claude mcp list` shows both), a Claude Code bug (as of 2.1.202) loads none of the plugin's bundled MCP servers: remove the redundant registration, or pin `reviewer=claude` if the project's own servers must stay. Otherwise check the plugin is installed and enabled — MCP servers load at session start, so the session may simply predate the install or enablement. Either way, start a fresh session in the project. |
-| `/orca:run` says the harness has no Workflow tool | The work loop needs a Claude Code harness with workflows; there is no conversational fallback. |
-| Run pauses on a permission prompt | The session wasn't in `bypassPermissions` mode. Enable it (Shift+Tab) and resume via the journal rather than restarting. |
-| `/orca:run` finds no brief | Runs start only from a brief. Run `/orca:brief <idea>` first; `/orca:run` discovers it automatically. |
+| `/orca:feature` says the codex MCP tool doesn't resolve | Two causes. If the project has any MCP config of its own (a `.mcp.json` at the repo root, or local-scope servers — `claude mcp list` shows both), a Claude Code bug (as of 2.1.202) loads none of the plugin's bundled MCP servers: remove the redundant registration, or pin `reviewer=claude` if the project's own servers must stay. Otherwise check the plugin is installed and enabled — MCP servers load at session start, so the session may simply predate the install or enablement. Either way, start a fresh session in the project. |
+| `/orca:feature` says the harness has no Workflow tool | The work loop needs a Claude Code harness with workflows; there is no conversational fallback. |
+| Run pauses on a permission prompt | The session wasn't in `bypassPermissions` mode. Enable it (Shift+Tab) and re-invoke `/orca:feature` — triage offers the resume from the journal — rather than restarting the run. |
 | `git fetch` does nothing in a bare clone made by hand | Bare clones get no fetch refspec. `/orca:init`'s clone path sets `remote.origin.fetch` — do the same, or re-clone through it. |
 
 ## Migrating from the pre-plugin skills
 
+Plugin versions before 0.2.0 shipped the interview and the run as two skills, `/orca:brief` and `/orca:run`. Both are folded into `/orca:feature` — triage decides between resume, run, and interview — and the old names are gone, with no aliases. The briefs directory is renamed too: move queued briefs with `mv .orca/briefs .orca/feat-briefs` at the repo root, after which they are discovered exactly as before. A run interrupted under `/orca:run` resumes under `/orca:feature` — the workflow journal keys on agent prompts, not on the script's (now-moved) path, and triage detects old run directories regardless of the new `feat-` naming (detection keys on `spec.md`, not the directory name).
+
 This repository previously shipped the same workflow as symlink-installed skills named `briefify`/`initify`/`orchestrify` (plus a Codex CLI variant, now scrapped). If you used those:
 
 - Remove the old symlinks from `~/.claude/skills` and `~/.claude/agents`.
-- Queued briefs migrate with `mv .orchestrify .orca` at the repo root.
+- Queued briefs migrate with `mv .orchestrify .orca && mv .orca/briefs .orca/feat-briefs` at the repo root.
 - In-flight pre-migration runs cannot resume under the plugin — clean up any leftover `orchestrify-*` worktrees and start fresh from a new brief.
 
 ## Repository contents
@@ -335,7 +338,8 @@ This repository previously shipped the same workflow as symlink-installed skills
 |---|---|
 | `.claude-plugin/plugin.json` | The plugin manifest (`orca`). |
 | `.mcp.json` | Bundled codex MCP server registration — the global PATH `codex` binary, never npm. |
-| `skills/brief/`, `skills/init/`, `skills/doctor/`, `skills/run/`, `skills/config/` | The five skills. |
-| `skills/run/scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
-| `skills/run/scripts/work-loop.workflow.js` | The deterministic work loop, run through the Workflow tool. |
+| `skills/feature/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The four skills. |
+| `skills/feature/interview.md` | The interview instructions, loaded only when triage lands on a new interview. |
+| `scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
+| `scripts/work-loop.workflow.js` | The deterministic work loop, run through the Workflow tool. |
 | `agents/` | The nine stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`). |

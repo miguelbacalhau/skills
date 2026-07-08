@@ -1,6 +1,6 @@
 ---
 name: merge
-description: Orca merge stage — merges one completed work item into the integration branch, resolving conflicts with both plans in hand. Spawned by the orca:run skill; not for standalone use.
+description: Orca merge stage — merges one completed work item into the integration branch, resolving conflicts with both plans in hand. Spawned by the orca work loop; not for standalone use.
 tools: Bash, Read, Edit, Write, Grep, Glob, TaskUpdate
 model: opus
 effort: high

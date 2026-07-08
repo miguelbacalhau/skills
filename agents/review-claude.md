@@ -1,6 +1,6 @@
 ---
 name: review-claude
-description: Orca review stage — the Claude reviewer for one work item: performs the independent adversarial review itself in a fresh context, writes the findings artifact in the same schema the Codex reviewer produces, and returns the finding counts. Used when the run's reviewer is claude; spawned by the orca:run skill, not for standalone use.
+description: Orca review stage — the Claude reviewer for one work item: performs the independent adversarial review itself in a fresh context, writes the findings artifact in the same schema the Codex reviewer produces, and returns the finding counts. Used when the run's reviewer is claude; spawned by the orca work loop, not for standalone use.
 tools: Read, Grep, Glob, Bash, Write, TaskUpdate
 model: opus
 effort: high

@@ -1,43 +1,64 @@
 ---
-description: Drive a feature from idea to committed code using a deterministic workflow over dedicated subagents — an autonomous orca feature run, NOT the built-in /run skill that launches or screenshots the project's app. Use when Claude should run fully autonomously from a confirmed brief — discover the brief file the orca:brief skill wrote in `.orca/briefs/`, restate and confirm it once, write a spec with a dependency-ordered work breakdown, then execute the work loop as a single Workflow-tool run that, per unblocked item, plans and implements in its own git worktree branched off a shared bare repository, reviews with an independent reviewer — cross-model Codex where it is installed or pinned, a dedicated fresh-context Claude reviewer otherwise — plus a Claude fix agent, commits, and serially merges into an integration worktree. Requires a brief (without one, the skill only points the user at orca:brief and stops), a bare-repo-with-worktrees layout (validated up front), and a harness with the Workflow tool; there is no privileged main checkout, and the run's deliverable is a branch the user lands themselves. After the opening confirmation — plus one optional breakdown checkpoint the brief opts into — nothing else asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
+description: Drive a feature from idea to committed code using a deterministic workflow over dedicated subagents — an autonomous orca feature run. A dispatcher over `.orca` state: triage offers to resume an interrupted run, to run a queued brief from `.orca/feat-briefs/`, or — with nothing waiting — interviews the idea into a durable brief, then offers to run it now or leave it queued. The run restates the brief and confirms it once, writes a spec with a dependency-ordered work breakdown, then executes the work loop as a single Workflow-tool run that, per unblocked item, plans and implements in its own git worktree branched off a shared bare repository, reviews with an independent reviewer — cross-model Codex where it is installed or pinned, a dedicated fresh-context Claude reviewer otherwise — plus a Claude fix agent, commits, and serially merges into an integration worktree. Requires a bare-repo-with-worktrees layout (validated up front) and a harness with the Workflow tool; there is no privileged main checkout, and the run's deliverable is a branch the user lands themselves. After the opening confirmation — plus one optional breakdown checkpoint the brief opts into — nothing else asks the user anything; undecidable issues are reported at the end. Do not use for small single-file changes or when the user only wants a spec or a plan.
 args: <idea>
 user-invocable: true
 disable-model-invocation: true
 ---
 
-# Orca: run
+# Orca: feature
 
-Coordinate a full implementation through isolated subagents. The main conversation handles everything interactive and cheap — the brief, the pre-flights, the spec, the checkpoint, and the final report — and delegates the long autonomous middle to **one deterministic workflow**: a bundled script, run through the Workflow tool, that spawns every stage agent with code-enforced control flow. All heavy context — codebase exploration, diffs, test output — lives and dies inside subagents; the main conversation only reads artifact files and the workflow's structured result.
+Coordinate a full implementation through isolated subagents. The main conversation handles everything interactive and cheap — the triage, the interview, the pre-flights, the spec, the checkpoint, and the final report — and delegates the long autonomous middle to **one deterministic workflow**: a bundled script, run through the Workflow tool, that spawns every stage agent with code-enforced control flow. All heavy context — codebase exploration, diffs, test output — lives and dies inside subagents; the main conversation only reads artifact files and the workflow's structured result.
 
 Isolation is double: each subagent has its own context window, and each work item has its own git worktree. The repository is a bare repo, and every working copy — the user's, the run's integration tree, and each item — is a peer worktree off that one shared object store. There is no privileged main checkout: the run never reads or writes the user's worktree, and the deliverable is a branch the user lands themselves. Parallel items can never corrupt each other's files — overlap surfaces as an explicit merge conflict, resolved by a dedicated merge agent with both items' plans in hand.
 
-The brief is where the user sets intent — written earlier with the orca:brief skill, discovered on disk, and confirmed once at the start of the run. It may also opt into a single checkpoint: a one-time review of the spec and work breakdown before any code is written. Apart from the opening confirmation and that opt-in checkpoint, never ask the user anything — no mid-run clarifications, no approval gates, no AskUserQuestion. The workflow runs autonomously in the background and could not pause for a question even if one arose; anything it cannot decide within the brief's stated intent becomes a `blocked` item surfaced in the final report.
+The brief is where the user sets intent — written in this skill's interview or queued by an earlier one, discovered on disk, and confirmed once at the start of the run. It may also opt into a single checkpoint: a one-time review of the spec and work breakdown before any code is written. Apart from the opening confirmation and that opt-in checkpoint, never ask the user anything — no mid-run clarifications, no approval gates, no AskUserQuestion. The workflow runs autonomously in the background and could not pause for a question even if one arose; anything it cannot decide within the brief's stated intent becomes a `blocked` item surfaced in the final report.
 
-## Input
+## Step 0: Triage
 
-The run starts from a brief — a captured interview, written earlier by the orca:brief skill. This skill does not interview: capturing intent well takes an unhurried conversation, and that conversation is orca:brief's whole job.
+This skill is a dispatcher over `.orca` state: what is on disk decides whether this invocation resumes, runs, or interviews. Work the ordered checks below at the repo root — resolve `<repo-root>` as the parent of `git rev-parse --path-format=absolute --git-common-dir` — discovering by listing, never by reading files to decide. Present the first hit, but never force it: every offer includes starting something new instead.
 
-Check for a waiting brief: list `.orca/briefs/*.md` at the repo root — one `ls`, filenames only, never reading files to decide. The directory's top level holds only unconsumed briefs (its `drafts/` subdirectory does not count), so presence is status.
+### 1. An interrupted run
 
-- **Exactly one brief:** read it and proceed to Step 1.
-- **Several briefs:** present the filenames — the timestamped names identify them — and ask which one this run is for. Read only the chosen one.
-- **None:** stop. Tell the user orca runs from a brief and to run `/orca:brief` first — suggesting it with any idea they gave, e.g. `/orca:brief <their idea>` — then invoke `/orca:run` again. Do not interview as a substitute, and do not run orca:brief for them: the discussion is theirs to have.
-- **An idea argument alongside a brief:** if it names the same work, fold it into the brief as an amendment at the Step 1 confirmation; if it is unrelated, ask whether to run the brief anyway or take the new idea to orca:brief first.
+Run directories are the `.orca/*/` entries holding a `spec.md` (`feat-briefs/` is not one). A run was interrupted when its `spec.md` carries a `**Workflow run:**` line — the workflow launched — and no sibling `report.md` exists: detect with one `grep -l '\*\*Workflow run:\*\*' .orca/*/spec.md` plus a check for which of those directories lack `report.md`, without reading anything into context. A `spec.md` without the runId line is a run that died before its workflow launched — not resumable; leave it alone.
+
+The on-disk predicate cannot tell an interrupted run from one still executing — `report.md` only appears at the end — so before offering, check the run is not live: if this session's task list or background tasks show its workflow still running, it is in flight, not interrupted — report that and fall through to the next check. If another session could plausibly be driving it (the user would know), ask rather than assume.
+
+Offer to resume. Several candidates → list the run directories by name and ask which. If the user declines in favor of new work, fall through to the next check.
+
+To resume — never by re-running stages conversationally: read the runId from the `**Workflow run:**` line at the end of `spec.md`, then re-invoke the Workflow tool exactly as Step 4 specifies, with the same `scriptPath` and rebuilt `args` plus `resumeFromRunId: "<runId>"`. Rebuild `args` from the spec's Work Breakdown, with the same `taskId`s the original launch used, the `reviewer` from the `**Workflow reviewer:**` line beside the runId — a spec with no such line predates the reviewer choice, and its run used `codex`, the only reviewer that existed — and the `agents` block from the `**Workflow agents:**` line — never from `.orca/config.json`, which may have changed since launch; no agents line means the launch passed no block, so omit the key. An `agents` or `reviewer` value that differs from the launch one makes every completed call of the affected stages re-run instead of replaying from the journal. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. The status-line text embedded in stage prompts is part of the journal key too: a run launched under a plugin version with different status-line wording (e.g. before the stage suffix moved onto the subject) re-runs its taskId-carrying stages instead of replaying them. Before resuming, reconcile leftover git state (`git worktree list`) only if the journal and the worktrees disagree. Step 1's permissions pre-flight applies to a resume too — live stages will spawn agents. Its graceful decline applies with one correction: on a resume there is no queued brief to report — the brief was consumed into the run directory at launch — so report instead that the run stays resumable from its journal, and that enabling bypass (Shift+Tab) and re-invoking `/orca:feature` will rediscover it in triage. When the resumed workflow completes, continue at Step 5.
+
+One hard boundary: a run started before this skill became the orca plugin **cannot resume** under it — agent types, worktree names, and journal keys all changed. Treat such a run as abandoned: clean up its leftovers per the Guidelines and start fresh.
+
+### 2. A queued brief
+
+List `.orca/feat-briefs/*.md` — top level only, one `ls`, filenames only; the timestamped names identify the briefs. The top level holds only unconsumed briefs (its `drafts/` subdirectory does not count), so presence is status.
+
+- **Briefs waiting:** present the filenames and offer to run one — or to interview a new idea instead. Read only the chosen brief and proceed to Step 1 with it.
+- **An `<idea>` argument alongside existing briefs:** if it names the same work as a queued brief, fold it into that brief as an amendment at the Step 1 confirmation; if it is unrelated, ask whether to run the queued brief anyway or interview the new idea into its own brief first.
+
+### 3. Nothing waiting
+
+Interview. Read `${CLAUDE_PLUGIN_ROOT}/skills/feature/interview.md` and follow it — it covers the discussion, the early pre-flight, and writing the brief file. It is loaded only now, so a pure run or resume invocation never carries the interview instructions. The `<idea>` argument, if any, seeds the interview.
+
+When the interview has written and approved its brief, ask once: **run it now, or leave it queued?**
+
+- **Run now:** proceed to Step 1 with the just-written brief. The Step 1 restatement and confirmation run in full — the brief was written seconds ago in this very conversation, but the file, not the conversation, is the authorized intent, and the confirmation is what authorizes the run.
+- **Queue:** tell the user the brief is ready and where it lives, and that invoking `/orca:feature` in this repository when ready will find it — no path or link needed; it will be restated, age-checked, and confirmed once before running. End cleanly.
 
 ## Step 1: Confirm the brief
 
 The brief is the only place intent was captured — once this step ends, the run is autonomous and every later ambiguity gets resolved against what the brief says. Restate it to the user: outcome, features, non-goals, inputs/outputs, constraints, doubt rule, and breakdown-checkpoint choice, plus any amendments folded in from an idea argument. Note the brief's age from its `Created` line and warn when it is more than a few days old — the codebase and the user's intent may have moved since it was written.
 
-If the brief is missing the doubt rule or the checkpoint choice (orca:brief always writes them; a hand-written brief may not), apply the defaults — prefer-smaller-scope, straight-through — and state them in the restatement rather than asking. The breakdown checkpoint, when the brief opts in, is a one-time review of the spec and work breakdown before any worktree or code: the decomposition is where parallel-agent mistakes originate, and it is the only optional pause in the run.
+If the brief is missing the doubt rule or the checkpoint choice (the interview always writes them; a hand-written brief may not), apply the defaults — prefer-smaller-scope, straight-through — and state them in the restatement rather than asking. The breakdown checkpoint, when the brief opts in, is a one-time review of the spec and work breakdown before any worktree or code: the decomposition is where parallel-agent mistakes originate, and it is the only optional pause in the run.
 
 The user's confirmation of the restated brief authorizes the run. If the brief opted into the breakdown checkpoint, the only remaining interaction is that one approval in Step 3; otherwise there is no later gate at all. From this point on, never ask the user anything else; proceed on recorded assumptions.
 
 ### Environment pre-flight (script)
 
-The run's mechanical prerequisites — the bare-repo layout and, when the reviewer is codex, the Codex tooling — are validated by one bundled script, which also resolves **which independent reviewer this run uses**. Run it during this step, before the confirmation, from the project root:
+The run's mechanical prerequisites — the bare-repo layout and, when the reviewer is codex, the Codex tooling — are validated by one bundled script, which also resolves **which independent reviewer this run uses**. If the interview's early pre-flight already ran the script in this same invocation, reuse its output — gates and reviewer line alike — instead of re-running it; re-run only when it reported a `FAIL` the user has since fixed. Otherwise run it during this step, before the confirmation, from the project root:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh
 ```
 
 `${CLAUDE_PLUGIN_ROOT}` substitutes to this plugin's installed root, so the resulting path is already absolute. The script is read-only and prints one line per gate plus a final result:
@@ -74,7 +95,7 @@ The skill cannot flip the mode itself, so confirm it during this step, before th
 - **Launch flag** — start the CLI with `claude --dangerously-skip-permissions`.
 - **Settings** — `"permissions": { "defaultMode": "bypassPermissions" }` in `.claude/settings.local.json`, for a repo where runs are always unattended.
 
-Make the tradeoff explicit to the user: bypass mode disables the approval gate for the *whole* session, not just this run's commands. That is the point — the run is designed to be unattended — but any other work in the same session loses the gate too, so a dedicated session for the run is the clean choice. If the user will not enable bypass mode, do not start: the run cannot be autonomous, and an allow-list will only let it pause partway.
+Make the tradeoff explicit to the user: bypass mode disables the approval gate for the *whole* session, not just this run's commands. That is the point — the run is designed to be unattended — but any other work in the same session loses the gate too, so a dedicated session for the run is the clean choice. If the user will not enable bypass mode now, the run cannot start — it would not be autonomous, and an allow-list would only let it pause partway — but do not fail the invocation: the brief is already durable. Report that the brief is saved and queued, that enabling bypass (Shift+Tab) and re-invoking `/orca:feature` — ideally in a dedicated session — will find it and run it, and end cleanly.
 
 ## Step 2: Write the spec and work breakdown
 
@@ -86,7 +107,7 @@ Create the run directory at the project root — the directory that holds the ba
 ├── <user worktrees…>                   # e.g. main/ — untouched by the run
 ├── orca-<slug>/                        # integration worktree (branch feature/<slug>)
 ├── orca-<slug>-<ID>/                   # one worktree per in-flight item (e.g. orca-<slug>-W1, branch feature/<slug>-W1)
-└── .orca/YYYYMMDD-HHMMSS-<slug>/
+└── .orca/YYYYMMDD-HHMMSS-feat-<slug>/
     ├── brief.md    # the consumed brief — the run's confirmed intent
     ├── spec.md     # requirements, interfaces, work breakdown, workflow runId
     ├── report.md   # final run report, written at the end
@@ -96,7 +117,7 @@ Create the run directory at the project root — the directory that holds the ba
 
 - `<repo-root>` is the directory containing the bare repo — resolve it as the parent of `git rev-parse --path-format=absolute --git-common-dir`.
 - Generate the timestamp by running `date +%Y%m%d-%H%M%S`.
-- Make `<slug>` a short kebab-case description of the idea, 3-5 words max.
+- Make `<slug>` a short kebab-case description of the idea, 3-5 words max. The `feat-` marker in the run directory's name is fixed: it is what lets an `ls .orca/` tell feature runs from other verbs' runs at a glance.
 - Worktree directories sit at `<repo-root>` and are named after the run — `orca-<slug>` for integration, `orca-<slug>-<ID>` for each item — while their branches use the neutral `feature/<slug>[-<ID>]` namespace. The difference is deliberate: the `orca-*` directory names are local scratch and the run's cleanup/discovery story (`git worktree list`), and never enter git; the `feature/*` branch names are what lands in git and shows on GitHub, so they carry no orca trace. The `.orca/` metadata is scratch space on disk, outside every worktree, so nothing in it can be committed by accident.
 
 Consume the brief now: `mv` it to `<run-dir>/brief.md`. The move is what marks it used — the briefs directory only ever holds unconsumed briefs — and it archives the confirmed intent with the run that acted on it.
@@ -159,11 +180,11 @@ Review prompts need no preparation: the reviewer agent — `orca:review-codex` (
 
 **Create the status tasks.** Once the breakdown is final, create one session task per work item — the live per-item surface the user watches during the run: `TaskCreate` with subject `Wn — <title>` for each item, then `TaskUpdate` with `addBlockedBy` mirroring each item's `deps` onto the created task ids. Put each item's task id into its `taskId` field in the Workflow args below; the script threads a `Status task:` line into every stage prompt, and the stage agents tick their own item's task as they run. A dependency-blocked item needs no updates from anyone — it truthfully sits `pending` with its blockers named on the task. This layer is display-only and fail-soft: if task creation fails, launch anyway — an item without a `taskId` simply gets no live row. The `integration` pseudo-item never gets a task.
 
-**Invoke the Workflow tool** with the bundled script and the run's values (this skill instructing the call is the user's consent for workflow orchestration). The script lives at `${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/work-loop.workflow.js` — the substituted value is already absolute; never pass `~` or an unsubstituted variable. `runDir` and `repoRoot` must be absolute too — the script rejects relative paths at launch:
+**Invoke the Workflow tool** with the bundled script and the run's values (this skill instructing the call is the user's consent for workflow orchestration). The script lives at `${CLAUDE_PLUGIN_ROOT}/scripts/work-loop.workflow.js` — the substituted value is already absolute; never pass `~` or an unsubstituted variable. `runDir` and `repoRoot` must be absolute too — the script rejects relative paths at launch:
 
 ```
 Workflow({
-  scriptPath: "${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/work-loop.workflow.js",
+  scriptPath: "${CLAUDE_PLUGIN_ROOT}/scripts/work-loop.workflow.js",
   args: {
     runDir: "<run-dir>",
     repoRoot: "<repo-root>",
@@ -191,7 +212,7 @@ The workflow runs in the background, but its `log()` lines (items merged, items 
 - Blocked items' worktrees and branches were kept — list them for the follow-up run.
 - Proceed to Step 5; the returned values feed the report directly, with no intermediate status file to update.
 
-**If the run is interrupted** — session death, a kill, a harness restart — do not re-run stages conversationally: re-invoke the Workflow tool with the same `scriptPath` and `args` plus `resumeFromRunId: "<runId>"`, reading the runId from the `**Workflow run:**` line at the end of `spec.md` (and rebuilding `args` from the spec's Work Breakdown, with the same `taskId`s the original launch used, the `reviewer` from the `**Workflow reviewer:**` line beside the runId — a spec with no such line predates the reviewer choice, and its run used `codex`, the only reviewer that existed — and the `agents` block from the `**Workflow agents:**` line — never from `.orca/config.json`, which may have changed since launch; no agents line means the launch passed no block, so omit the key. An `agents` or `reviewer` value that differs from the launch one makes every completed call of the affected stages re-run instead of replaying from the journal). Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. The status-line text embedded in stage prompts is part of the journal key too: a run launched under a plugin version with different status-line wording (e.g. before the stage suffix moved onto the subject) re-runs its taskId-carrying stages instead of replaying them. Before resuming, reconcile leftover git state (`git worktree list`) only if the journal and the worktrees disagree. One hard boundary: a run started before this skill became the orca plugin **cannot resume** under it — agent types, worktree names, and journal keys all changed. Treat such a run as abandoned: clean up its leftovers per the Guidelines and start a fresh run from a new brief.
+**If the run is interrupted** — session death, a kill, a harness restart — do not re-run stages conversationally: the run stays resumable from its journal, and a later `/orca:feature` invocation discovers it in triage and offers the resume (Step 0), rebuilding the launch-time values from the `**Workflow run:**`, `**Workflow reviewer:**`, and `**Workflow agents:**` lines persisted at the end of `spec.md`. If the interruption happened in this still-living session, resume the same way — Step 0's resume branch, from the spec's persisted lines, not from conversation memory.
 
 ## Step 5: Report
 
@@ -243,6 +264,6 @@ After writing the file, give the user a short spoken summary — what shipped wi
 - State lives in files and the workflow journal, not in conversation memory. `spec.md` holds the breakdown and the `**Workflow run:**` runId line, `report.md` holds the outcome; mid-run state is the journal, and an interrupted run resumes with `resumeFromRunId` — never by re-running stages conversationally.
 - Pass context between stages through artifact files, never by relaying summaries — the implement agent reads the plan file itself, the reviewer reads the plan and diff itself and writes findings to its review file, and the fix agent reads that review file itself. Structured agent returns (verdicts, hashes, reconciliation results) exist for the workflow's control flow, not as a substitute for the artifacts.
 - One worktree per work item, created by the workflow at the repo root off the shared bare repo, shared by that item's implement, review, fix, and commit stages, removed only after merge. All worktrees — the user's, the integration tree, and each item — are peers off the bare repo; the run never reads or writes the user's worktree. Only the serialized merge agent writes the integration branch, inside the integration worktree.
-- If a run is abandoned, clean up with `git worktree list` and remove any leftover `orca-*` worktrees plus their `feature/<slug>*` branches — but prefer resuming via `resumeFromRunId` over abandoning.
+- If a run is abandoned, clean up with `git worktree list` and remove any leftover `orca-*` worktrees plus their `feature/<slug>*` branches — but prefer resuming via Step 0's resume branch over abandoning.
 - After the Step 1 confirmation — and the optional breakdown checkpoint in Step 3, if the brief opted into it — the run never waits on the user: no approval requests, no clarifying questions, no AskUserQuestion. Ambiguity resolves against the spec and the doubt rule; what cannot be resolved that way becomes a `blocked` item in the final report.
 - Keep the user informed at phase transitions with one or two one-way status lines relayed from the workflow's progress: items started, items merged, amendments made, anything blocked. Inform, never ask.

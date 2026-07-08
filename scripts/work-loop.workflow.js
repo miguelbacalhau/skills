@@ -14,7 +14,7 @@
 // token ceiling comes from `budget`.
 //
 // args: {
-//   runDir            .orca/<timestamp>-<slug> — spec.md, plans/, reviews/ (absolute)
+//   runDir            .orca/<timestamp>-feat-<slug> — spec.md, plans/, reviews/ (absolute)
 //   repoRoot          parent of the bare repo; all worktrees live here (absolute)
 //   slug              run slug; integration worktree is <repoRoot>/orca-<slug>
 //   integrationBranch feature/<slug> — item branches derive from it (${integrationBranch}-${id})

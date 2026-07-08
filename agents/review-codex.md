@@ -1,6 +1,6 @@
 ---
 name: review-codex
-description: Orca review stage — drives the independent cross-model Codex review for one work item through the codex MCP tool, writes the findings artifact verbatim, and returns the finding counts. Used when the run's reviewer is codex; spawned by the orca:run skill, not for standalone use.
+description: Orca review stage — drives the independent cross-model Codex review for one work item through the codex MCP tool, writes the findings artifact verbatim, and returns the finding counts. Used when the run's reviewer is codex; spawned by the orca work loop, not for standalone use.
 tools: mcp__plugin_orca_orca-codex__codex, Read, Write, ToolSearch, TaskUpdate
 model: sonnet
 effort: medium

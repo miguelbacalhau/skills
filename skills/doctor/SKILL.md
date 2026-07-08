@@ -1,5 +1,5 @@
 ---
-description: Diagnose and fix the machine and session tooling orca runs depend on — the Codex CLI (presence, version, authentication), the `MCP_TOOL_TIMEOUT` settings write, the reviewer resolution (codex or claude, pinned or detected), and the optional `bypassPermissions` default-mode write. Use when orca:run's pre-flight fails a machine gate, when codex install/auth/timeout problems need walking through, or when the user wants to check or understand which reviewer runs will use. Not for repository layout — the bare-repo-with-worktrees conversion is orca:init's job — and does not start runs. Interactive and consent-per-step: diagnosis is free, every write is confirmed first.
+description: Diagnose and fix the machine and session tooling orca runs depend on — the Codex CLI (presence, version, authentication), the `MCP_TOOL_TIMEOUT` settings write, the reviewer resolution (codex or claude, pinned or detected), and the optional `bypassPermissions` default-mode write. Use when orca:feature's pre-flight fails a machine gate, when codex install/auth/timeout problems need walking through, or when the user wants to check or understand which reviewer runs will use. Not for repository layout — the bare-repo-with-worktrees conversion is orca:init's job — and does not start runs. Interactive and consent-per-step: diagnosis is free, every write is confirmed first.
 args: <optional focus, e.g. "codex" or "timeout">
 user-invocable: true
 disable-model-invocation: true
@@ -11,17 +11,17 @@ Make the *machine* ready for orca runs. Repository layout is orca:init's job and
 
 ## Step 1: Diagnose
 
-**Inside a git repository**, run orca:run's pre-flight from the project root — read-only, and its output is the work list:
+**Inside a git repository**, run orca:feature's pre-flight from the project root — read-only, and its output is the work list:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh
 ```
 
 Report every gate in plain language: `BARE_REPO` (`PASS | FAIL`), the `REVIEWER:` line (which reviewer, pinned by `.orca/config.json` or detected from the machine), and `CODEX` (`PASS | FAIL | SKIPPED` — skipped means the resolved reviewer is claude and the codex checks deliberately did not run). A `REVIEWER: FAIL` means the config key is invalid — point at orca:config; nothing here edits that file.
 
 Whenever the resolved reviewer is codex, add the one probe the script cannot run — the **live MCP probe**, from this session: call ToolSearch with `select:mcp__plugin_orca_orca-codex__codex`. Missing while the codex gates pass means review agents cannot reach codex, and the cause is one of two. First check whether the project carries MCP config of its own — a `.mcp.json` at the repo root, or local-scope servers (`claude mcp list` shows both): a known harness bug (present as of Claude Code 2.1.202) loads none of a plugin's bundled MCP servers when any such config exists. A leftover `codex` registration is redundant — the plugin bundles the server — so prescribe removing it, never remove it yourself; if the project genuinely needs its own MCP servers, the workaround is pinning `reviewer=claude` via orca:config, trade-off stated. Otherwise the session predates the plugin's install or enablement. Both remedies end in a fresh session, so name that alongside the other restart caveats.
 
-**Outside a git repository**, run in machine-only mode: say up front that the layout gate and reviewer pinning are per-repo and unchecked here. Probe codex directly with the same checks the pre-flight runs — binary on PATH, `codex --version` against the minimum version the preflight names (read `codex_min_version` from `${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh` rather than reciting a remembered one), `codex login status`, and `MCP_TOOL_TIMEOUT` in a settings env block. Treat the resolved reviewer as detected-only, offer the timeout write to `~/.claude/settings.json` only (there is no project settings file to offer), and skip the `bypassPermissions` offer (also per-repo).
+**Outside a git repository**, run in machine-only mode: say up front that the layout gate and reviewer pinning are per-repo and unchecked here. Probe codex directly with the same checks the pre-flight runs — binary on PATH, `codex --version` against the minimum version the preflight names (read `codex_min_version` from `${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh` rather than reciting a remembered one), `codex login status`, and `MCP_TOOL_TIMEOUT` in a settings env block. Treat the resolved reviewer as detected-only, offer the timeout write to `~/.claude/settings.json` only (there is no project settings file to offer), and skip the `bypassPermissions` offer (also per-repo).
 
 ## Step 2: Route layout failures away
 
@@ -47,7 +47,7 @@ For a repo where orca runs are always unattended, offer to write `"permissions":
 
 ## Step 5: Verify
 
-Re-run the pre-flight (inside a repository) or the direct codex probes (machine-only) and report gate by gate. Name what remains on the user rather than glossing it: a `codex login` not yet done, a session restart pending before the settings env loads. Close by pointing at the workflow the machine is now ready for: `/orca:brief` to capture a feature's intent, then `/orca:run` to run it — or `/orca:init` first if the layout gate is the one still failing.
+Re-run the pre-flight (inside a repository) or the direct codex probes (machine-only) and report gate by gate. Name what remains on the user rather than glossing it: a `codex login` not yet done, a session restart pending before the settings env loads. Close by pointing at the workflow the machine is now ready for: `/orca:feature` to capture a feature's intent and run it — or `/orca:init` first if the layout gate is the one still failing.
 
 ## Guidelines
 

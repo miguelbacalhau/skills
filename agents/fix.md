@@ -1,6 +1,6 @@
 ---
 name: fix
-description: Orca fix stage — applies independent-review findings for one work item inside its worktree. Spawned by the orca:run skill; not for standalone use.
+description: Orca fix stage — applies independent-review findings for one work item inside its worktree. Spawned by the orca work loop; not for standalone use.
 tools: Read, Write, Edit, Bash, Grep, Glob, TaskUpdate
 model: opus
 effort: high

@@ -1,6 +1,6 @@
 ---
 name: spec
-description: Orca spec stage — read-only codebase exploration that turns the confirmed brief into the run's spec and dependency-ordered work breakdown. Spawned once by the orca:run skill; not for standalone use.
+description: Orca spec stage — read-only codebase exploration that turns the confirmed brief into the run's spec and dependency-ordered work breakdown. Spawned once at the start of an orca run; not for standalone use.
 tools: Read, Grep, Glob, Write
 model: opus
 effort: xhigh

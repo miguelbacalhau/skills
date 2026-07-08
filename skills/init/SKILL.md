@@ -1,5 +1,5 @@
 ---
-description: Set up a repository's layout for orca runs — the bare-repo-with-worktrees structure with a default-branch worktree that orca:run's pre-flight requires. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orca runs, or when the pre-flight's layout gate (BARE_REPO) failed. Layout only: machine and session tooling (Codex CLI, MCP timeout, permissions) is orca:doctor's job. Interactive and consent-per-step — it restructures repositories, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
+description: Set up a repository's layout for orca runs — the bare-repo-with-worktrees structure with a default-branch worktree that orca:feature's pre-flight requires. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orca runs, or when the pre-flight's layout gate (BARE_REPO) failed. Layout only: machine and session tooling (Codex CLI, MCP timeout, permissions) is orca:doctor's job. Interactive and consent-per-step — it restructures repositories, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
 args: <path or clone URL, optional>
 user-invocable: true
 disable-model-invocation: true
@@ -7,18 +7,18 @@ disable-model-invocation: true
 
 # Orca: init
 
-Give a repository the layout orca:run's pre-flight requires — fixed once per repo. The run skill itself refuses to do this autonomously — converting a repo is the user's decision — and this skill is where that decision gets made: invoking it is the consent, and each mutating step confirms once more before acting.
+Give a repository the layout orca:feature's pre-flight requires — fixed once per repo. The feature skill itself refuses to do this autonomously — converting a repo is the user's decision — and this skill is where that decision gets made: invoking it is the consent, and each mutating step confirms once more before acting.
 
-The temperament is the opposite of orca:run's: interactive throughout, consent per step, no autonomy. It runs once, so there is nothing to gain by not asking.
+The temperament is the opposite of an orca:feature run's: interactive throughout, consent per step, no autonomy. It runs once, so there is nothing to gain by not asking.
 
 Layout only: machine and session tooling — the Codex CLI, the MCP tool timeout, permission modes — belongs to **orca:doctor**, and the subagent definitions and codex MCP server registration ship inside the orca plugin itself, so any session with the plugin has them.
 
 ## Step 1: Diagnose
 
-If inside a git repository, run orca:run's pre-flight first — it is read-only:
+If inside a git repository, run orca:feature's pre-flight first — it is read-only:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/skills/run/scripts/preflight.sh
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh
 ```
 
 The layout gate — `BARE_REPO` — is this skill's work list; fix it with Step 2 below. The machine lines (`REVIEWER`, `CODEX` — `PASS | FAIL | SKIPPED`) are reported but not fixed here: on a machine-gate `FAIL`, point at **orca:doctor**. If `BARE_REPO` already passes, say so and stop — anything else the pre-flight flagged is doctor's, not this skill's.
@@ -106,7 +106,7 @@ Nothing in this touches history, refs, remotes, or config beyond `core.bare` —
 
 ## Step 3: Verify
 
-Re-run the pre-flight. `BARE_REPO` must now pass — that is this skill's deliverable. Report the machine lines too (`REVIEWER`, and `CODEX` as `PASS | FAIL | SKIPPED`): they cost nothing to relay, but a failing machine gate is fixed by **orca:doctor**, not here. Close by pointing at what comes next: `/orca:doctor` if a machine gate failed, then `/orca:brief` to capture a feature's intent, then `/orca:run` to run it.
+Re-run the pre-flight. `BARE_REPO` must now pass — that is this skill's deliverable. Report the machine lines too (`REVIEWER`, and `CODEX` as `PASS | FAIL | SKIPPED`): they cost nothing to relay, but a failing machine gate is fixed by **orca:doctor**, not here. Close by pointing at what comes next: `/orca:doctor` if a machine gate failed, then `/orca:feature` to capture a feature's intent and run it.
 
 ## Guidelines
 
@@ -114,4 +114,4 @@ Re-run the pre-flight. `BARE_REPO` must now pass — that is this skill's delive
 - Never touch history, refs, or remotes. The conversion changes layout, not content.
 - Layout only: never install tooling, write settings blocks, or change permission modes from here — that is orca:doctor's job, where each write has its own consent step.
 - Stop rather than improvise on: a dirty tree, existing worktrees, submodules, or a repo whose layout is already bare-with-worktrees but differs from the target shape (report the difference instead).
-- The default worktree is not optional: a bare store with no worktree strands the user, and orca:run's deliverable — a branch to land — assumes they have a working copy to land it from.
+- The default worktree is not optional: a bare store with no worktree strands the user, and orca:feature's deliverable — a branch to land — assumes they have a working copy to land it from.

@@ -1,6 +1,6 @@
 ---
 name: plan
-description: Orca plan stage — read-only planner for one work item. Spawned by the orca:run skill; not for standalone use.
+description: Orca plan stage — read-only planner for one work item. Spawned by the orca work loop; not for standalone use.
 tools: Read, Grep, Glob, Write, TaskUpdate
 model: opus
 effort: xhigh

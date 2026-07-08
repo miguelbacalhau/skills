@@ -6,7 +6,7 @@
     {
       "name": "orca",
       "source": "./",
-      "description": "Autonomous multi-agent feature development: brief → init/doctor → run."
+      "description": "Autonomous multi-agent feature development: init/doctor once, then orca:feature from idea to integration branch."
     }
   ]
 }
