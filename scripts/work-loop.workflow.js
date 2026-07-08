@@ -115,11 +115,17 @@ if (reviewer !== 'codex' && reviewer !== 'claude')
 const TUNABLE = ['plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integrate']
 // 'spec' is a valid config key — the run skill passes the config block
 // verbatim — but it is applied conversationally at spec-spawn time, before
-// this workflow exists; here it is validated and otherwise ignored.
-const STAGES = ['spec', ...TUNABLE]
-// These three lists must stay in lockstep with skills/config/SKILL.md Step 3,
-// the write-time validator — a value accepted there but rejected here bricks
-// every launch until the config file is hand-edited.
+// this workflow exists; here it is validated and otherwise ignored. The debug
+// verb's stages get the same treatment: the config file has ONE agents block
+// shared by both verbs (orca:debug passes it verbatim into its nested call to
+// this script), so a debug override must be valid-and-ignored here, never a
+// launch failure.
+const STAGES = ['spec', ...TUNABLE, 'reproduce', 'hypothesize', 'verify', 'diagnose']
+// The stage vocabulary is one shared 12-key list kept in lockstep across four
+// validators — skills/config/SKILL.md Step 3 (write time), the feature and
+// debug skills' launch validation, this script, and debug-loop.workflow.js —
+// a value accepted anywhere but rejected here bricks every launch until the
+// config file is hand-edited. MODELS/EFFORTS are part of the same lockstep.
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 let agentCfg = parsedArgs.agents ?? {}
