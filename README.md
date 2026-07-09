@@ -7,12 +7,13 @@ A [Claude Code](https://claude.com/claude-code) plugin for autonomous, multi-age
                          # (interactive until one confirmation, autonomous after)
 /orca:debug <symptom>    # triage → interview/case → repro gate → hypotheses →
                          # verify → diagnose → fix → repro check → report
+/orca:review             # open a deliverable branch for review in your editor (nvim via tmux)
 /orca:init               # one-time repository layout setup      (interactive, consent per step)
 /orca:doctor             # one-time machine tooling setup        (interactive, consent per step)
 /orca:config             # optional per-repo reviewer & model/effort tuning
 ```
 
-The deliverable of a run is a branch on an integration worktree — `feature/<slug>` for features, `fix/<slug>` for fixed bugs — which you land yourself with `git merge --no-ff <branch>`. The runs never touch your own worktree, and no commit they produce mentions Claude, AI, agents, or orca.
+The deliverable of a run is a branch on an integration worktree — `feature/<slug>` for features, `fix/<slug>` for fixed bugs — which you review with `/orca:review` and land yourself with `git merge --no-ff <branch>`. The runs never touch your own worktree, and no commit they produce mentions Claude, AI, agents, or orca.
 
 ## Table of contents
 
@@ -113,7 +114,9 @@ MCP servers load at session start, so after installing or enabling the plugin, *
 #     lands a fix with a regression test on a fix/<slug> branch.
 /orca:debug the export endpoint returns 500 on files over 2MB
 
-# 3. Land the deliverable from your own worktree.
+# 3. Walk the deliverable's diff in your own editor (nvim, via a tmux
+#    window in your session), then land it from your own worktree.
+/orca:review
 git merge --no-ff feature/<slug>     # or fix/<slug>
 ```
 
@@ -157,6 +160,14 @@ The debug verb — a dispatcher over `.orca/bug-cases/`, where an open **case** 
 
 **The run** (see [Anatomy of a debug run](#anatomy-of-a-debug-run)) interacts exactly once — one confirmation of the restated case and scope. Two hard rules shape it: the **repro gate** (no deterministic reproduction → the run records the attempt in the ledger and stops loudly; there is no evidence-only fallback) and **three-valued verdicts** (`confirmed` requires observed evidence; `inconclusive` is honest and seeds the next run — no manufactured confidence). On `fixed`, the deliverable is a `fix/<slug>` branch carrying the fix plus a regression test derived from the repro.
 
+### `/orca:review [branch]`
+
+The human half of review — the runs' adversarial review stage is automated and lives inside them; this opens the finished deliverable in *your* editor before you land it. It discovers unmerged `feature/<slug>` / `fix/<slug>` deliverable branches (one → opens it; several → asks; a gone integration worktree → offers to add it back) and opens a **new tmux window in your current session**, sitting in the deliverable's integration worktree, running [orca.nvim](https://github.com/miguelbacalhau/orca.nvim)'s `:OrcaReview` — quickfix file list, native side-by-side merge-base diffs, your LSP and colors. Quit nvim (`:qa`) and the window closes, dropping you back where you invoked it, ready to `git merge --no-ff`.
+
+tmux is the mechanism, not a convenience — the harness has no TTY to run an interactive editor in, so a new window in the session `$TMUX` points at is the one way a skill puts a live editor in front of you. Without tmux, or without orca.nvim (`/orca:doctor` prescribes the install), it prints the exact command to run instead (`cd <worktree> && nvim "+OrcaReview"`, or a `git difftool` fallback) and stops.
+
+Two config keys govern it, set via `/orca:config`: `editor` (`nvim`|`none`) and `terminal` (`tmux`|`none`), with the same semantics as `reviewer` — absent detects, a pin fails loudly instead of silently falling back, `none` opts out to the printed command.
+
 ### `/orca:init [path or clone URL]`
 
 One-time, consent-per-step setup that makes a repository pass `/orca:feature`'s pre-flight. Handles three cases:
@@ -179,7 +190,7 @@ Interactive, consent-per-step machine and session tooling — the per-machine co
 
 It is reviewer-aware: with a detected claude reviewer (codex not installed) there is nothing to fix — it says runs will use the Claude reviewer, explains that installing codex enables the stronger cross-model review, and offers to pin either choice via `/orca:config`. With claude pinned and codex present, it notes the codex gates were skipped by choice. A codex gate failing while the reviewer is codex is always a failure to fix — never a silent switch to the other reviewer.
 
-Optionally — offered, never defaulted — it can write `bypassPermissions` as the default mode for a repo where runs are always unattended, and, when Neovim is on PATH, check for the [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) companion and prescribe its install so `:OrcaReview` walks a deliverable branch's merge-base diff in your own editor (quickfix file list, native side-by-side diff, your LSP and colors) before you `git merge --no-ff` it. Layout failures route the other way: `BARE_REPO: FAIL` goes to `/orca:init`.
+Optionally — offered, never defaulted — it can write `bypassPermissions` as the default mode for a repo where runs are always unattended, and, when Neovim is on PATH, check for the [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) companion and prescribe its install so `:OrcaReview` — what `/orca:review` opens — walks a deliverable branch's merge-base diff in your own editor (quickfix file list, native side-by-side diff, your LSP and colors) before you `git merge --no-ff` it. Layout failures route the other way: `BARE_REPO: FAIL` goes to `/orca:init`.
 
 ### `/orca:config [assignments | reset]`
 
@@ -331,11 +342,13 @@ Override any of these per repository with [`/orca:config`](#orcaconfig-assignmen
 
 ## Configuration
 
-**`.orca/config.json`** (repo root, written by `/orca:config`) — the reviewer choice and per-stage model/effort overrides, applied at the next run launch:
+**`.orca/config.json`** (repo root, written by `/orca:config`) — the reviewer choice and per-stage model/effort overrides, applied at the next run launch, plus the `/orca:review` keys, read fresh on each invocation:
 
 ```json
 {
   "reviewer": "claude",
+  "editor": "nvim",
+  "terminal": "tmux",
   "agents": {
     "plan": { "effort": "high" },
     "implement": { "model": "opus" }
@@ -343,7 +356,7 @@ Override any of these per repository with [`/orca:config`](#orcaconfig-assignmen
 }
 ```
 
-A present `reviewer` key **pins** the choice; an absent key means each launch **detects** (codex on PATH at the minimum version → codex, else claude). The `agents` overrides sit on top of the agent defaults. One block serves both verbs — the feature stages and the debug stages (`reproduce`, `hypothesize`, `verify`, `diagnose`) live side by side, and each run applies its own verb's keys while validating and ignoring the other's.
+A present `reviewer` key **pins** the choice; an absent key means each launch **detects** (codex on PATH at the minimum version → codex, else claude). `editor` (`nvim`|`none`) and `terminal` (`tmux`|`none`) carry the identical contract for `/orca:review` — absent detects (orca.nvim probe; `$TMUX`), a pin turns a missing dependency into a loud failure, `none` opts out to a printed command. They are machine preferences in a repo file — a deliberate trade: `.orca/` sits outside every worktree (effectively personal), detection means most users never set them, and one config surface beats a user-level layer for two keys. The `agents` overrides sit on top of the agent defaults. One block serves both verbs — the feature stages and the debug stages (`reproduce`, `hypothesize`, `verify`, `diagnose`) live side by side, and each run applies its own verb's keys while validating and ignoring the other's.
 
 **`MCP_TOOL_TIMEOUT`** — codex-only: client-side session env governing MCP tool-call timeouts; a plugin cannot ship it, so `/orca:doctor` writes it into the `env` block of `.claude/settings.local.json` (or `~/.claude/settings.json`):
 
@@ -414,10 +427,10 @@ This repository previously shipped the same workflow as symlink-installed skills
 |---|---|
 | `.claude-plugin/plugin.json` | The plugin manifest (`orca`). |
 | `.mcp.json` | Bundled codex MCP server registration — the global PATH `codex` binary, never npm. |
-| `skills/feature/`, `skills/debug/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The five skills. |
+| `skills/feature/`, `skills/debug/`, `skills/review/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The six skills. |
 | `skills/feature/interview.md`, `skills/debug/interview.md` | The interview instructions, loaded only when a verb's triage lands on a new interview. |
 | `scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
 | `agents/` | The thirteen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`). |
-| [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) *(separate repository)* | The Neovim companion: `:OrcaReview` reviews a branch's merge-base diff in your own editor. Dependency-free, installs like any plugin; `/orca:doctor` checks it and prescribes the install. |
+| [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) *(separate repository)* | The Neovim companion: `:OrcaReview` reviews a branch's merge-base diff in your own editor — opened by `/orca:review`. Dependency-free, installs like any plugin; `/orca:doctor` checks it and prescribes the install. |

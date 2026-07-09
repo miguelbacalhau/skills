@@ -156,7 +156,7 @@ Then, in order — the artifacts at hand are `diagnosis.md`, `verdicts/*.json`, 
 
 ## Landing  <!-- fixed only -->
 
-The fix — regression test included — is the `fix/<slug>` branch, built in the fix integration worktree. Land it from your own worktree with `git merge --no-ff fix/<slug>`, then optionally push.
+The fix — regression test included — is the `fix/<slug>` branch, built in the fix integration worktree. Walk the diff in your own editor first with `/orca:review`, then land it from your own worktree with `git merge --no-ff fix/<slug>`, then optionally push.
 ```
 
 2. **Append the run's outcomes to `<case-dir>/ledger.md`** — the append-only memory that makes the next run converge: a `## Run YYYYMMDD-HHMMSS-bug-<slug> — <status>` section with one line per hypothesis tested (id, statement, verdict, evidence pointer into the run dir or `evidence/`), one line per fix attempt (the `fix/<slug>` ref and its repro-check outcome), and on `no-repro` a line recording what reproduction attempt failed (from the returned `notes`). Never rewrite or delete prior entries.

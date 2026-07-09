@@ -45,7 +45,7 @@ What there is to fix depends on the resolved reviewer:
 
 **`bypassPermissions` default mode.** For a repo where orca runs are always unattended, offer to write `"permissions": { "defaultMode": "bypassPermissions" }` into `<repo-root>/<branch>/.claude/settings.local.json`. State the tradeoff plainly: it disables the approval gate for every session opened in that worktree, not just orca runs. Declining is fine — the mode can be toggled per session with Shift+Tab instead. (Per-repo, so skipped entirely in machine-only mode.)
 
-**The orca.nvim install check.** Per-machine (offered in machine-only mode too), and only when `nvim` is on PATH — absent, skip silently. The Neovim companion lives in its own repository, [`miguelbacalhau/orca.nvim`](https://github.com/miguelbacalhau/orca.nvim); its `:OrcaReview` opens a deliverable branch's merge-base diff in the user's own editor. Doctor prescribes; it never edits the user's nvim config. Probe with the user's real configuration:
+**The orca.nvim install check.** Per-machine (offered in machine-only mode too), and only when `nvim` is on PATH — absent, skip silently. The Neovim companion lives in its own repository, [`miguelbacalhau/orca.nvim`](https://github.com/miguelbacalhau/orca.nvim); its `:OrcaReview` opens a deliverable branch's merge-base diff in the user's own editor. This same probe gates **orca:review** — the skill that opens that review in a tmux window — so a failed prescription here is what turns orca:review into its print-only fallback (or a loud FAIL, when `editor=nvim` is pinned). Doctor prescribes; it never edits the user's nvim config. Probe with the user's real configuration:
 
 ```bash
 nvim --headless "+lua io.write(pcall(require,'orca') and 'yes' or 'no')" +qa!

@@ -251,7 +251,7 @@ Write the run report to `<run-dir>/report.md` **first**, then relay its highligh
 
 ## Landing
 
-The deliverable is the `feature/<slug>` branch, built in the integration worktree. Land it from your own worktree with `git merge --no-ff feature/<slug>`, then optionally push.
+The deliverable is the `feature/<slug>` branch, built in the integration worktree. Walk the diff in your own editor first with `/orca:review`, then land it from your own worktree with `git merge --no-ff feature/<slug>`, then optionally push.
 ```
 
 After writing the file, give the user a short spoken summary — what shipped with commit hashes, anything `blocked` and the decision it waits on, the integration result feature by feature, tokens spent, and the path to the full `report.md` — then the landing command. The report file is the authoritative version; the spoken summary just points at it.
