@@ -31,11 +31,14 @@ Triage in the house style — offer the first match, never force it:
 - **None** → say so plainly: nothing to review; runs produce deliverables, so point at `/orca:feature` and `/orca:debug`.
 - **One** → open it (Step 2 onward).
 - **Several** → ask which. An `<args>` branch that names one skips the ask; an `<args>` branch that names nothing discovered is a loud miss — list what was found, never guess.
-- **Branch unmerged but its worktree is gone** → the branch is still reviewable; offer to add the worktree back on the existing branch, then proceed:
+- **Branch unmerged but its worktree is gone** → the branch is still reviewable; offer to add the worktree back on the existing branch, then proceed. The path comes from the branch's namespace — `feature/<slug>` → `<repo-root>/orca-<slug>`, `fix/<slug>` → `<repo-root>/orca-fix-<slug>`:
 
   ```bash
-  git worktree add <repo-root>/orca-<slug> feature/<slug>
+  git worktree add <repo-root>/orca-<slug> feature/<slug>       # or
+  git worktree add <repo-root>/orca-fix-<slug> fix/<slug>
   ```
+
+Whatever the route, carry the selected deliverable forward as the pair `<branch>` + `<worktree>` — the worktree path taken from the porcelain output (or the re-add above), never rebuilt by guessing.
 
 ## Step 2: Resolve editor and terminal
 
@@ -55,11 +58,11 @@ An unknown value in either key is a loud pre-flight-style FAIL naming the allowe
 
 ## Step 3: Open
 
-Both keys resolved to their working values → create the window, focused immediately (the skill is user-invoked; "review now" means take me there), with the integration worktree as cwd:
+Both keys resolved to their working values → create the window, focused immediately (the skill is user-invoked; "review now" means take me there), with the deliverable's `<worktree>` from Step 1 as cwd:
 
 ```bash
 win=$(tmux new-window -P -F '#{window_id}' -n review \
-      -c "<repo-root>/orca-<slug>" 'nvim "+OrcaReview"')
+      -c "<worktree>" 'nvim "+OrcaReview"')
 tmux set-option -w -t "$win" remain-on-exit off
 ```
 
@@ -81,7 +84,7 @@ Fire-and-forget — do not wait on, poll, or watch the window; the run ends here
 
 Taken when any of: `terminal=none`, `$TMUX` unset (undetected, not pinned), `editor=none`, or the orca.nvim probe failed undetected. Emit the exact command and stop cleanly:
 
-- **nvim usable, no tmux** — `cd <repo-root>/orca-<slug> && nvim "+OrcaReview"`
+- **nvim usable, no tmux** — `cd <worktree> && nvim "+OrcaReview"`
 - **no usable editor** (`editor=none`, or probe failed) — the no-install fallback, from the integration worktree: `git difftool -d <trunk>...HEAD` (vimdiff via `-t vimdiff` if no difftool is configured)
 
 Either way, close with the landing command as in Step 4. Do not guess at detached tmux sessions, terminal emulators, or other editors — one hard-coded implementation behind two config gates, on purpose.
