@@ -1,5 +1,5 @@
 ---
-description: Diagnose and fix the machine and session tooling orca runs depend on — the Codex CLI (presence, version, authentication), the `MCP_TOOL_TIMEOUT` settings write, the reviewer resolution (codex or claude, pinned or detected), the optional `bypassPermissions` default-mode write, and the optional orca.nvim install check/prescription for reviewing deliverable branches in Neovim. Use when orca:feature's pre-flight fails a machine gate, when codex install/auth/timeout problems need walking through, or when the user wants to check or understand which reviewer runs will use. Not for repository layout — the bare-repo-with-worktrees conversion is orca:init's job — and does not start runs. Interactive and consent-per-step: diagnosis is free, every write is confirmed first.
+description: Diagnose and fix the machine and session tooling orca runs depend on — the Codex CLI (presence, version, authentication), the `MCP_TOOL_TIMEOUT` settings write, the reviewer resolution (codex or claude, pinned or detected), the optional `bypassPermissions` default-mode write, and the optional orca.nvim / orca.vscode install checks/prescriptions for reviewing deliverable branches in the user's editor. Use when orca:feature's pre-flight fails a machine gate, when codex install/auth/timeout problems need walking through, or when the user wants to check or understand which reviewer runs will use. Not for repository layout — the bare-repo-with-worktrees conversion is orca:init's job — and does not start runs. Interactive and consent-per-step: diagnosis is free, every write is confirmed first.
 args: <optional focus, e.g. "codex" or "timeout">
 user-invocable: true
 disable-model-invocation: true
@@ -59,6 +59,21 @@ Updates ride the manager's own update flow, or `git -C <clone> pull` for clone i
 Machine hygiene, pre-release only: the never-shipped symlink design left links on dev machines (`site/pack/orca/start/orca.nvim` → a checkout's `nvim/`). A *symlink* at the clone path is one of those — offer to replace it with a real install. No user-facing migration story is needed; v1 was never released.
 
 Verification is in-editor: `:checkhealth orca`.
+
+**The orca.vscode install check.** Per-machine (offered in machine-only mode too), and only when `code` is on PATH — absent, skip silently (`code` not being on PATH on a machine with VS Code installed usually means the "Install 'code' command in PATH" palette action hasn't been run; mention that only if the user asks about VS Code). The VS Code companion lives in its own repository, [`miguelbacalhau/orca.vscode`](https://github.com/miguelbacalhau/orca.vscode); its "Orca: Review" opens a deliverable branch's merge-base diff in the user's own VS Code. This same probe gates **orca:review**'s vscode tier — a failed prescription here is what turns orca:review into its print-only fallback (or a loud FAIL, when `editor=vscode` is pinned). Doctor prescribes; it never installs. Probe:
+
+```bash
+code --list-extensions | grep -qx miguelbacalhau.orca-vscode
+```
+
+- Listed → installed; nothing to do — report it.
+- Not listed → prescribe the VSIX from the [latest GitHub release](https://github.com/miguelbacalhau/orca.vscode/releases):
+
+  ```bash
+  code --install-extension <path-to-downloaded>/orca-vscode-<version>.vsix
+  ```
+
+  Marketplace publish is deferred until the extension stabilizes, so the release VSIX is the install path. Updates are the same command with a newer VSIX; uninstall is `code --uninstall-extension miguelbacalhau.orca-vscode`. Forks that alias `code` (Cursor, VSCodium, code-insiders) are not probed for — one binary, one id, on purpose.
 
 ## Step 5: Verify
 
