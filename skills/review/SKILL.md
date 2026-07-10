@@ -56,7 +56,7 @@ Read `.orca/config.json` at the repo root for the two flat top-level keys, each 
   - **vscode**: the orca.vscode probe passes — one command checks both the CLI and the extension:
 
     ```bash
-    code --list-extensions | grep -qx miguelbacalhau.orca-vscode
+    code --list-extensions | grep -qx miguelnjacinto.orca-vscode
     ```
 
   A **pinned** editor whose probe fails → loud FAIL: name the probe, point at `/orca:doctor`'s prescription for that editor, stop. A probe failing while merely **detected** → try the next tier, then the print-only path, with the doctor pointer stated once. `editor=none` → the user reviews their own way; print-only path.
@@ -82,7 +82,7 @@ No machinery for close-and-return: the window's lifetime is nvim's process lifet
 **Editor vscode** → hand the worktree to the extension's URI handler; no tmux involved, the `terminal` key was never consulted:
 
 ```bash
-code --open-url 'vscode://miguelbacalhau.orca-vscode/review?worktree=<worktree>'
+code --open-url 'vscode://miguelnjacinto.orca-vscode/review?worktree=<worktree>'
 ```
 
 The range is omitted on purpose — the extension defaults to `<trunk>...HEAD`, the common case (a `range` query param exists for completeness). The extension owns the window targeting: a window already on the worktree starts the session directly; otherwise a transient handoff record plus a new window on the worktree does. No VS Code running at all is the same path — `--open-url` launches it.

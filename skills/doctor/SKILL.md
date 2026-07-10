@@ -63,7 +63,7 @@ Verification is in-editor: `:checkhealth orca`.
 **The orca.vscode install check.** Per-machine (offered in machine-only mode too), and only when `code` is on PATH — absent, skip silently (`code` not being on PATH on a machine with VS Code installed usually means the "Install 'code' command in PATH" palette action hasn't been run; mention that only if the user asks about VS Code). The VS Code companion lives in its own repository, [`miguelbacalhau/orca.vscode`](https://github.com/miguelbacalhau/orca.vscode); its "Orca: Review" opens a deliverable branch's merge-base diff in the user's own VS Code. This same probe gates **orca:review**'s vscode tier — a failed prescription here is what turns orca:review into its print-only fallback (or a loud FAIL, when `editor=vscode` is pinned). Doctor prescribes; it never installs. Probe:
 
 ```bash
-code --list-extensions | grep -qx miguelbacalhau.orca-vscode
+code --list-extensions | grep -qx miguelnjacinto.orca-vscode
 ```
 
 - Listed → installed; nothing to do — report it.
@@ -73,7 +73,7 @@ code --list-extensions | grep -qx miguelbacalhau.orca-vscode
   code --install-extension <path-to-downloaded>/orca-vscode-<version>.vsix
   ```
 
-  Marketplace publish is deferred until the extension stabilizes, so the release VSIX is the install path. Updates are the same command with a newer VSIX; uninstall is `code --uninstall-extension miguelbacalhau.orca-vscode`. Forks that alias `code` (Cursor, VSCodium, code-insiders) are not probed for — one binary, one id, on purpose.
+  Marketplace publish is deferred until the extension stabilizes, so the release VSIX is the install path. Updates are the same command with a newer VSIX; uninstall is `code --uninstall-extension miguelnjacinto.orca-vscode`. Forks that alias `code` (Cursor, VSCodium, code-insiders) are not probed for — one binary, one id, on purpose.
 
 ## Step 5: Verify
 
