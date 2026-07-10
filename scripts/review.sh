@@ -60,6 +60,27 @@ print_only() { # <reason> <detail> <command> — clean opt-out, exit 2
   exit 2
 }
 
+# Quote one value for copy-paste into the user's shell — COMMAND: payloads
+# must survive paths and refnames containing quotes or metacharacters.
+shq() { printf '%q' "$1"; }
+
+# Percent-encode one URI query value. The extension parses the query with
+# URLSearchParams, which percent-decodes — a raw path containing & # % + ?
+# would arrive truncated or corrupted. Byte-wise (LC_ALL=C) so multibyte
+# characters encode as their UTF-8 bytes.
+urlencode() {
+  local LC_ALL=C
+  local s="$1" out="" c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c="${s:$i:1}"
+    case "$c" in
+      [A-Za-z0-9./_~-]) out+="$c" ;;
+      *) out+="$(printf '%%%02X' "$(( $(printf '%d' "'$c") & 0xFF ))")" ;;  # mask: bash yields high bytes signed
+    esac
+  done
+  printf '%s' "$out"
+}
+
 # Resolve common_dir / repo_root / trunk; typed FAIL outside the bare layout.
 resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
@@ -173,7 +194,7 @@ cmd_open() {
     fail NO_SUCH_WORKTREE "$worktree is not a directory — re-run discover (a missing deliverable needs its worktree re-added first)"
   fi
 
-  local difftool_cmd="cd '$worktree' && git difftool -d $trunk...HEAD"
+  local difftool_cmd="cd $(shq "$worktree") && git difftool -d $(shq "$trunk")...HEAD"
 
   # --- editor: absent -> detect (nvim, then vscode), pinned -> loud fail, none -> opt out ---
   local editor probe_detail=""
@@ -209,7 +230,7 @@ cmd_open() {
     fi
   fi
 
-  local nvim_cmd="cd '$worktree' && nvim \"+OrcaReview\""
+  local nvim_cmd="cd $(shq "$worktree") && nvim \"+OrcaReview\""
 
   if [[ "$resolved" == "nvim" ]]; then
     # --- terminal: consulted only for nvim — the vscode launch is a detached GUI ---
@@ -245,11 +266,11 @@ cmd_open() {
 
   # vscode — the extension owns window targeting and defaults the range to
   # <trunk>...HEAD; no VS Code running is the same path, --open-url launches it.
-  if code --open-url "vscode://miguelnjacinto.orca-vscode/review?worktree=$worktree" >/dev/null 2>&1; then
+  if code --open-url "vscode://miguelnjacinto.orca-vscode/review?worktree=$(urlencode "$worktree")" >/dev/null 2>&1; then
     printf 'OPEN:\tvscode\t%s\n' "$worktree"
     exit 0
   fi
-  print_only VSCODE_LAUNCH_FAILED "code --open-url failed — after opening, run \"Orca: Review\" from the palette" "cd '$worktree' && code ."
+  print_only VSCODE_LAUNCH_FAILED "code --open-url failed — after opening, run \"Orca: Review\" from the palette" "cd $(shq "$worktree") && code ."
 }
 
 case "${1:-}" in
