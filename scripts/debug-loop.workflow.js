@@ -92,10 +92,11 @@ if (fixTaskId !== undefined && (typeof fixTaskId !== 'string' || !fixTaskId))
 
 // Per-stage model/effort overrides (args.agents). The stage vocabulary is the
 // ONE shared 12-key list — feature's stages plus debug's — kept in lockstep
-// across skills/config/SKILL.md Step 3, the feature skill's Step 2 validation,
-// work-loop.workflow.js, and this script: the config file has a single agents
-// block, and a key accepted by any validator must be accepted by all four, or
-// a written override bricks the other verb's launches. This script applies
+// across scripts/config.sh (write time, and the run skills' launch validation
+// via its validate subcommand), work-loop.workflow.js, and this script: the
+// config file has a single agents block, and a key accepted by any validator
+// must be accepted by all three, or a written override bricks the other
+// verb's launches. This script applies
 // only the debug stages; the rest are validated here and applied by the
 // nested work loop, which receives the block verbatim.
 const DEBUG_TUNABLE = ['reproduce', 'hypothesize', 'verify', 'diagnose']

@@ -24,15 +24,15 @@ The workflow's internal helper agents — the shell relay, reconciliation, escal
 
 ## Step 1: Read the current state
 
-Resolve `<repo-root>` as the parent of `git rev-parse --path-format=absolute --git-common-dir`. If not inside a git repository, explain that the config is per-repository and stop.
-
-Defaults live in the plugin and may change across plugin versions — read them fresh rather than reciting remembered values:
+The bundled script is the sole reader and writer of `<repo-root>/.orca/config.json` — never read, author, or repair the file directly:
 
 ```bash
-grep -H -E '^(model|effort):' ${CLAUDE_PLUGIN_ROOT}/agents/*.md
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/config.sh show
 ```
 
-Then read `<repo-root>/.orca/config.json` if it exists: its top-level `reviewer` key holds the pinned reviewer, its top-level `editor`/`terminal` keys the orca:review pins, its `agents` block the current stage overrides. To resolve the **effective** reviewer when the key is absent, apply the run's own detection rule — codex binary on PATH at the minimum version → codex, else claude; the bundled preflight (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh`) prints it as the `REVIEWER:` line if you'd rather not probe by hand.
+One typed TAB-separated line per fact: `REVIEWER:` (the pinned value, or `absent`), `EDITOR:` and `TERMINAL:` (value or `absent`), one `OVERRIDE:` line per set stage field, and one `DEFAULT: <stage> <model> <effort>` line per stage — read fresh from the plugin's own agent definitions, so they track the installed plugin version. The review stage appears twice, as `review-codex` and `review-claude`; render the row for the effective reviewer. A `FAIL:` line names what is wrong — translate it: `NOT_GIT` means the config is per-repository, so explain that and stop; a mangled file (`PARSE_ERROR`, `DUPLICATE_KEY`, an unknown key or value) is fixed by a targeted `set`/`clear`, or by `config.sh reset` — the full reset is the recovery path and works even when the file cannot be parsed.
+
+To resolve the **effective** reviewer when the key is absent, run the bundled preflight (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh`) and read its `REVIEWER:` line — the config script never detects; compose the two outputs.
 
 ## Step 2: Show the state
 
@@ -45,22 +45,13 @@ First the reviewer, with provenance — e.g. `Reviewer: codex (pinned)` or `Revi
 | spec | explores the codebase, writes the spec and work breakdown | opus | xhigh |
 | plan | … | … | … |
 
-One line per stage, role in a few words (spec: writes the spec and breakdown; plan: plans one item; implement: builds one item; review: drives the Codex review *or* performs the Claude review, per the effective reviewer — say which; fix: applies review findings; commit: commits one item; merge: merges into the integration branch; integrate: verifies the assembled feature; reproduce: turns a bug case into a deterministic repro script; hypothesize: writes ranked root-cause candidates; verify: adversarially tests one hypothesis; diagnose: judges the verdicts into a diagnosis and fix contract). Group the table by verb — the first eight stages run in feature runs (and, `spec` excepted, in a debug run's fix tail — debug runs never spawn a spec agent), the last four in debug runs. Show the effective value, marking overrides — e.g. `sonnet (override; default opus)` — so defaults and overrides are distinguishable at a glance. With reviewer claude, the review row's defaults are `orca:review-claude`'s (opus / high), not the courier's.
+One line per stage, role in a few words (spec: writes the spec and breakdown; plan: plans one item; implement: builds one item; review: drives the Codex review *or* performs the Claude review, per the effective reviewer — say which; fix: applies review findings; commit: commits one item; merge: merges into the integration branch; integrate: verifies the assembled feature; reproduce: turns a bug case into a deterministic repro script; hypothesize: writes ranked root-cause candidates; verify: adversarially tests one hypothesis; diagnose: judges the verdicts into a diagnosis and fix contract). Group the table by verb — the first eight stages run in feature runs (and, `spec` excepted, in a debug run's fix tail — debug runs never spawn a spec agent), the last four in debug runs. Show the effective value, marking overrides — e.g. `sonnet (override; default opus)` — so defaults and overrides are distinguishable at a glance. The review row's defaults come from the `DEFAULT:` line matching the effective reviewer — `review-claude` with reviewer claude, `review-codex` (the courier) with codex.
 
 ## Step 3: Apply changes
 
 Arguments like `plan.model=sonnet review.effort=high reviewer=claude editor=none` apply directly. `reset` clears every override — the reviewer, editor, and terminal keys included; `reset <stage>` clears one stage; the value `default` clears a single field (`plan.model=default`, `reviewer=default`, `editor=default`, `terminal=default` — for the top-level keys, back to detection). With no arguments, show the state and ask what to change in plain conversation — do not march through all twelve stages unless asked.
 
-Validate every assignment before writing, and reject bad ones naming the allowed values:
-
-- stage ∈ `spec`, `plan`, `implement`, `review`, `fix`, `commit`, `merge`, `integrate`, `reproduce`, `hypothesize`, `verify`, `diagnose`
-- model ∈ `haiku`, `sonnet`, `opus`, `fable` — harness model aliases; warn that `fable` only works on plans whose harness offers it
-- effort ∈ `low`, `medium`, `high`, `xhigh`, `max`
-- `spec.effort` is rejected with the explanation above
-- `reviewer` ∈ `codex`, `claude` (or `default` to clear)
-- `editor` ∈ `nvim`, `vscode`, `none` (or `default` to clear) · `terminal` ∈ `tmux`, `none` (or `default` to clear) — read only by orca:review, so run launches never validate them; still reject unknown values here, since orca:review fails loudly on one
-
-These lists must match the `STAGES`/`MODELS`/`EFFORTS` constants and the reviewer check in `${CLAUDE_PLUGIN_ROOT}/scripts/work-loop.workflow.js` **and** `${CLAUDE_PLUGIN_ROOT}/scripts/debug-loop.workflow.js` — the launch-time validators that reject anything written here that they do not accept; the stage vocabulary is one shared 12-key list, and a key accepted at write time but rejected by either script bricks that verb's launches. If there is any doubt this prose is current (a plugin update may have changed the scripts), read the constants from the scripts and validate against those.
+Validation is the script's, not yours: it checks every assignment against the same stage/model/effort/reviewer/editor/terminal vocabulary the workflow scripts enforce at launch (the literal lists live in `config.sh` beside the workflow scripts' copies, under one lockstep comment), rejects a bad batch whole — one typed `FAIL:` line per bad assignment, nothing written — and its `SPEC_EFFORT` rejection carries the spec-is-spawned-conversationally explanation above. Your job is translation and advice, not re-checking: relay what each `FAIL:` line names, and add the one warning the script cannot know — `fable` is accepted but only works on plans whose harness offers it.
 
 On `reviewer=claude`, state the trade-off in one sentence: the Claude reviewer keeps fresh-context independence (a separate agent, only the artifacts and the diff, an adversarial contract) but is same-model — cross-model codex review does not share the implementer's blind spots. On `reviewer=codex`, note that the codex machine gates (binary, auth, `MCP_TOOL_TIMEOUT`) must pass at run time — run the preflight to check, and point at orca:doctor if they currently fail.
 
@@ -68,25 +59,20 @@ An override equal to today's default is still meaningful — it pins the stage a
 
 ## Step 4: Write and confirm
 
-Merge into any existing `<repo-root>/.orca/config.json` rather than overwriting unrelated keys, creating `.orca/` if needed. In the bare-repo layout orca:init creates, `.orca/` sits outside every worktree and cannot be committed; in a conventional checkout, `<repo-root>` **is** the working tree, so when creating `.orca/` there, also append `.orca/` to `<git-common-dir>/info/exclude` (if not already present) — the per-clone ignore file — so a stray `git add -A` never commits per-machine model preferences; the repo's tracked `.gitignore` stays untouched. Store only the overridden fields:
+Apply the changes with one script call — a batch is all-or-nothing, so a partial write can never happen:
 
-```json
-{
-  "reviewer": "claude",
-  "editor": "none",
-  "agents": {
-    "plan": { "effort": "high" },
-    "implement": { "model": "opus" }
-  }
-}
+```bash
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/config.sh set plan.model=sonnet reviewer=claude editor=default
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/config.sh clear review.effort     # same as review.effort=default
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/config.sh reset [stage]
 ```
 
-Cleared fields are removed, an empty stage object is removed, an empty `agents` block is removed, a cleared top-level key (`reviewer`, `editor`, `terminal`) is removed entirely (never written as `null` or `"default"`), and a file left `{}` is deleted.
+The mechanics are the script's: merge into the existing file rather than overwriting unrelated keys, store only overridden fields in a canonical compact shape, remove cleared fields, empty stage objects, and an empty `agents` block (never writing `null` or `"default"`), delete a file left empty, and — in a conventional checkout, where `<repo-root>` **is** the working tree — keep `.orca/` listed in `<git-common-dir>/info/exclude` (the per-clone ignore file) so a stray `git add -A` never commits per-machine model preferences; the repo's tracked `.gitignore` stays untouched. On success it emits the resulting state (the same typed lines as `show`) plus a `WROTE:` or `DELETED:` line.
 
-Then show the resulting state once more and state when it takes effect: the **next orca run launch** (feature or debug) — except `editor`/`terminal`, which orca:review reads fresh on every invocation. A run already in flight keeps the configuration it launched with, and a resume (`resumeFromRunId`) does too — orca:feature records the launch-time agents block and reviewer in the run's `spec.md`, orca:debug in the case's `case.md`, and resumes replay that record, never this file — so editing overrides here affects only future launches.
+Render that resulting state back to the user as Step 2 does, and state when it takes effect: the **next orca run launch** (feature or debug) — except `editor`/`terminal`, which orca:review reads fresh on every invocation. A run already in flight keeps the configuration it launched with, and a resume (`resumeFromRunId`) does too — orca:feature records the launch-time Workflow args in the run's `spec.md`, orca:debug in the case's `case.md`, and resumes replay that record verbatim, never this file — so editing overrides here affects only future launches.
 
 ## Guidelines
 
-- Never edit `${CLAUDE_PLUGIN_ROOT}/agents/*.md` — plugin files are replaced on update, and the defaults are the plugin's to set. Overrides live only in the repo's `.orca/config.json`.
+- Never edit `${CLAUDE_PLUGIN_ROOT}/agents/*.md` — plugin files are replaced on update, and the defaults are the plugin's to set. Overrides live only in the repo's `.orca/config.json`, and every read and write of that file goes through `config.sh` — the canonical shape it guarantees is what lets the preflight and orca:review scripts read the file with grep.
 - This skill configures the reviewer choice, the orca:review `editor`/`terminal` keys, and models/effort only. The codex machine setup (binary, auth, MCP timeout) and the orca.nvim / orca.vscode installs belong to orca:doctor; repository layout belongs to orca:init; run behavior belongs to orca:feature and orca:debug; opening the review itself belongs to orca:review.
 - Advise, don't moralize: if an override looks self-defeating (haiku for plan or merge, where judgment failures cost whole items; max effort on commit, which formats a message), say so in one sentence and write what the user chose.

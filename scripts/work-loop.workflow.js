@@ -121,11 +121,14 @@ const TUNABLE = ['plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integ
 // this script), so a debug override must be valid-and-ignored here, never a
 // launch failure.
 const STAGES = ['spec', ...TUNABLE, 'reproduce', 'hypothesize', 'verify', 'diagnose']
-// The stage vocabulary is one shared 12-key list kept in lockstep across four
-// validators — skills/config/SKILL.md Step 3 (write time), the feature and
-// debug skills' launch validation, this script, and debug-loop.workflow.js —
-// a value accepted anywhere but rejected here bricks every launch until the
-// config file is hand-edited. MODELS/EFFORTS are part of the same lockstep.
+// The stage vocabulary is one shared 12-key list kept in lockstep across
+// three code validators — scripts/config.sh (write time, and the run skills'
+// launch validation via its validate subcommand), this script, and
+// debug-loop.workflow.js — a value accepted anywhere but rejected here bricks
+// every launch until the config file is hand-edited. MODELS/EFFORTS are part
+// of the same lockstep. Workflow scripts run sandboxed with no filesystem
+// access, so they cannot read a shared vocab file — the literal copies are
+// the design.
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 let agentCfg = parsedArgs.agents ?? {}
