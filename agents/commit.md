@@ -18,6 +18,8 @@ Read `<run-dir>/plans/<ID>.md` first — its Approach and Deviations sections ar
 
 Write a Conventional Commits message: `<type>(<scope>): <description>`, imperative mood, lower-case, no trailing period, under 70 characters. Add a body if the change needs context; mention significant deviations from the plan. Do not push, do not amend.
 
+When the plan's Decisions or Deviations sections record a non-obvious choice, add a decision bullet per choice to the body — format `chose X over Y: <reason>`, one line each. The filter: would a future `git blame` reader need this to understand why the code is this way? Most commits carry zero decision bullets; an item producing five is a scoping smell, not a formatting problem. Keep the whole body under ~20 lines. Item-scoped rationale belongs here and only here — run-level decisions ride the merge commit, never both.
+
 The message must describe only the change itself. Never mention Claude, AI, agents, this orchestration process, or the user in the subject, body, or footers — no Co-Authored-By or Generated-with trailers, no attribution of any kind.
 
 Return the commit hash and the message used.

@@ -33,6 +33,11 @@
 //                     (pinned in .orca/config.json, else detected from the
 //                     preflight); this script never detects — it has no shell
 //                     and must stay deterministic for resume
+//   updateContext     optional boolean, default true — run the orca:context
+//                     agent over <repoRoot>/.orca/{map.md,decisions.md} after
+//                     the Integrate phase. The debug loop passes false into
+//                     its nested fix call: the debug run maintains the
+//                     context itself, with the diagnosis in hand
 // }
 //
 // Review prompts are not inputs: the reviewer agent (orca:review-codex driving
@@ -52,6 +57,7 @@ export const meta = {
     { title: 'Review', detail: 'independent review (codex or claude per config) and fix rounds (max 2)' },
     { title: 'Merge', detail: 'commit, then serialized merges into the integration branch' },
     { title: 'Integrate', detail: 'full-feature verification in the integration worktree' },
+    { title: 'Context', detail: 'fold the run into the machine-local project context' },
   ],
 }
 
@@ -104,6 +110,17 @@ const integrationWt = `${repoRoot}/orca-${slug}`
 const reviewer = parsedArgs.reviewer
 if (reviewer !== 'codex' && reviewer !== 'claude')
   throw new Error(`args.reviewer must be "codex" or "claude" (got ${JSON.stringify(reviewer)}) — the run skill resolves it before launch`)
+
+// Post-run context maintenance is on unless the caller opts out (the debug
+// loop's nested fix call does — the debug run maintains the context itself).
+if (parsedArgs.updateContext !== undefined && typeof parsedArgs.updateContext !== 'boolean')
+  throw new Error(`args.updateContext, when present, must be a boolean (got ${JSON.stringify(parsedArgs.updateContext)})`)
+const updateContext = parsedArgs.updateContext !== false
+// Machine-local project context: hints injected into judgment-stage prompts.
+// The files live in .orca/ outside every worktree; the run skill's refresh
+// step made them current (or seeded them) before launch, and stage agents
+// treat a missing file as skippable, so this line is safe unconditionally.
+const contextLine = `Project context: ${repoRoot}/.orca/map.md (codebase map) and ${repoRoot}/.orca/decisions.md (decision log) — hints from a snapshot at the commit stamped in each header, not ground truth: read them first for where to look, verify anything you rely on; file paths rot slower than implementation details. A missing file is skipped, not an error.`
 
 // Per-stage model/effort overrides (args.agents). Only the seven
 // workflow-spawned stages are tunable — spec is spawned conversationally
@@ -194,6 +211,11 @@ const REVIEW = { type: 'object', additionalProperties: false, required: ['writte
     total: { type: 'integer', minimum: 0 },
     criticalHigh: { type: 'integer', minimum: 0 },
     reason: { type: 'string' } } }
+const CONTEXT = { type: 'object', additionalProperties: false,
+  required: ['updated', 'promotions', 'summary'],
+  properties: { updated: { type: 'boolean' },
+    promotions: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' } } }
 const INTEGRATION = { type: 'object', additionalProperties: false,
   required: ['features', 'fixesApplied', 'gaps'],
   properties: {
@@ -368,6 +390,7 @@ const planItem = i => agent(
    `Item: ${i.id} — ${i.title}`,
    `Owned files: ${i.files.join(', ')}`,
    `Integration worktree: ${integrationWt}`,
+   contextLine,
    statusLine(i, 'planning')].filter(Boolean).join('\n'),
   tuned('plan', { agentType: 'orca:plan', label: `plan:${i.id}`, phase: 'Plan' }))
 
@@ -823,4 +846,29 @@ if (shipped.length) {
   }
 }
 
-return { shipped, cut, blocked, integration, tokensSpent: budget.spent() }
+// ---------- context maintenance ----------
+// Fold the run into the machine-local project context. Non-fatal by design:
+// a run whose context agent dies still delivered its branch — the promotions
+// list just stays empty and the next run's refresh step catches the files up.
+let promotions = []
+if (updateContext && shipped.length) {
+  phase('Context')
+  try {
+    const ctx = await agent(
+      [`Run directory: ${runDir}`,
+       `Integration worktree: ${integrationWt}`,
+       `Context files: ${repoRoot}/.orca/map.md (codebase map) and ${repoRoot}/.orca/decisions.md (decision log)`]
+        .join('\n'),
+      { agentType: 'orca:context', label: 'context', phase: 'Context', schema: CONTEXT })
+    if (ctx) {
+      promotions = ctx.promotions
+      log(`context ${ctx.updated ? 'updated' : 'unchanged'}: ${ctx.summary}`)
+    } else {
+      log('context agent was skipped or died (non-fatal) — the next run refreshes the context files')
+    }
+  } catch (err) {
+    log(`context maintenance failed (non-fatal): ${String((err && err.message) || err)}`)
+  }
+}
+
+return { shipped, cut, blocked, integration, promotions, tokensSpent: budget.spent() }

@@ -14,6 +14,9 @@ Your task message gives you:
 - the repository root (`<repo-root>`)
 - the current timestamp, for the spec's `Created` line
 - the **brief**: the outcome, required features, explicit non-goals, inputs/outputs, constraints, and the doubt rule (prefer-smaller-scope or prefer-complete), exactly as the orchestrator confirmed them with the user
+- possibly a `Project context:` line naming the machine-local context files (`map.md`, the codebase map; `decisions.md`, the decision log)
+
+When the `Project context:` line is present, read both files FIRST — they are hints from a snapshot at the commit stamped in each header, not ground truth: use the map as where-to-look-first and verify anything you build on (file paths rot slower than implementation details), and honor the decision log's recorded choices unless the brief itself overrides one — a spec that silently contradicts a recorded decision is a bug, a spec that deliberately reverses one says so under Assumptions. A named file that does not exist is skipped, not an error.
 
 The brief is authoritative. Do not expand scope past it, drop a promised feature, or cross a stated non-goal. Your job is to translate that intent into a decomposition the codebase can actually support.
 

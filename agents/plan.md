@@ -16,6 +16,8 @@ Read-only on source: do not modify any source file. The only file you write is y
 
 Read `<run-dir>/spec.md` first. Honor its Interfaces section exactly; never invent alternatives to the contracts it defines.
 
+Your task message may include a `Project context:` line naming the machine-local codebase map and decision log. Read them before exploring — hints from a snapshot at the commit stamped in each header, not ground truth: the map tells you where to look first, and the decision log's recorded choices constrain your plan the way the spec does. Verify anything you build on; a named file that does not exist is skipped, not an error.
+
 Explore the codebase inside `<integration-worktree>` as much as needed — it holds the integration branch, including every merged dependency your item builds on; never read the user's own worktrees, whose state the run does not control. Your exploration dies with you — only the plan file survives, so make it self-sufficient for a fresh implementer with no other context.
 
 Write for a weaker model than you: the implementer is competent but runs a cheaper tier, so the plan must not rely on it making the judgment calls you could make now. Exact file paths, concrete code sketches for every non-obvious step, explicit edge cases, and Verification commands that catch the mistakes you would expect a modest implementer to make. Write conclusions and pointers, not transcripts of your exploration.

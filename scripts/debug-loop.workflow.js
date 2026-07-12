@@ -49,7 +49,8 @@
 //           diagnosis?, fixBranch? (present iff a fix attempt was committed,
 //           whatever the final status), notes? (no-repro: what the attempt
 //           hit; not-fixed: why the fix is unverified when repro.sh exits
-//           125), hypothesesTested, tokensSpent }
+//           125), promotions? (fixed only: knowledge the context agent
+//           flagged for human promotion), hypothesesTested, tokensSpent }
 
 export const meta = {
   name: 'orca-debug-loop',
@@ -61,6 +62,7 @@ export const meta = {
     { title: 'Diagnose', detail: 'judge merges the verdicts into one root-cause statement' },
     { title: 'Fix', detail: 'nested work loop over the synthesized one-item fix contract' },
     { title: 'Check', detail: 'deterministic repro re-run in the fix integration worktree' },
+    { title: 'Context', detail: 'fold the landed fix into the machine-local project context' },
   ],
 }
 
@@ -139,7 +141,17 @@ const fixWt = `${repoRoot}/orca-fix-${slug}`
 const fixBranch = `fix/${slug}`
 const reproCmd = `bash "${caseDir}/repro.sh"`
 
+// Machine-local project context: hints injected into the judgment-stage
+// prompts (hypothesize, diagnose). The run skill's refresh step made the
+// files current before launch; agents skip a missing file.
+const contextLine = `Project context: ${repoRoot}/.orca/map.md (codebase map) and ${repoRoot}/.orca/decisions.md (decision log) — hints from a snapshot at the commit stamped in each header, not ground truth: read them first for where to look, verify anything you rely on; file paths rot slower than implementation details. A missing file is skipped, not an error.`
+
 // ---------- structured-output schemas ----------
+const CONTEXT = { type: 'object', additionalProperties: false,
+  required: ['updated', 'promotions', 'summary'],
+  properties: { updated: { type: 'boolean' },
+    promotions: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' } } }
 const REPRODUCE = { type: 'object', additionalProperties: false, required: ['reproduced', 'notes'],
   properties: { reproduced: { type: 'boolean' }, notes: { type: 'string' } } }
 const HYPOTHESES = { type: 'object', additionalProperties: false, required: ['hypotheses'],
@@ -314,6 +326,7 @@ for (let round = 1; round <= 2; round++) {
     [`Case directory: ${caseDir}`,
      `Run directory: ${runDir}`,
      `Exploration worktree: ${baseWt}`,
+     contextLine,
      `Hypotheses file to write: ${hypPath}`,
      `Number your hypotheses sequentially from H${offset + 1} — ids must be unique across this run.`,
      refuted.length ? `Refuted THIS run — never re-propose: ${refuted.map(t => `${t.id}: ${t.statement}`).join('; ')}` : '',
@@ -356,6 +369,7 @@ for (let round = 1; round <= 2; round++) {
   const diag = must(await agent(
     [`Case directory: ${caseDir}`,
      `Run directory: ${runDir}`,
+     contextLine,
      `Hypotheses files: ${hypFiles}`,
      `Verdicts directory: ${runDir}/verdicts (one JSON per hypothesis)`,
      `Diagnosis file to write: ${runDir}/diagnosis.md`,
@@ -407,6 +421,9 @@ for (let round = 1; round <= 2; round++) {
       integrationBranch: fixBranch,   // and item branches fix/<slug>-F<n>
       items: [item],
       reviewer,
+      // This run maintains the project context itself after the Check phase,
+      // with the diagnosis in hand — the nested loop must not double-run it.
+      updateContext: false,
       ...(Object.keys(agentCfg).length ? { agents: agentCfg } : {}),
     })
   } catch (err) {
@@ -436,7 +453,28 @@ for (let round = 1; round <= 2; round++) {
   const check = await reproCheck(fixWt, `repro-check#${round}`, 'Check')
   if (check.exitCode === 0) {
     log(`repro.sh exits 0 in ${fixWt} — fixed`)
-    return { status: 'fixed', diagnosis, fixBranch, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    // Fold the landed fix into the machine-local project context. Non-fatal:
+    // a run whose context agent dies still delivered its branch.
+    phase('Context')
+    let promotions = []
+    try {
+      const ctx = await agent(
+        [`Run directory: ${runDir}`,
+         `Integration worktree: ${fixWt}`,
+         `Context files: ${repoRoot}/.orca/map.md (codebase map) and ${repoRoot}/.orca/decisions.md (decision log)`,
+         `This was a debug run: the diagnosis is ${runDir}/diagnosis.md and the fix contract with its plans is under ${runDir}/fix/.`]
+          .join('\n'),
+        { agentType: 'orca:context', label: 'context', phase: 'Context', schema: CONTEXT })
+      if (ctx) {
+        promotions = ctx.promotions
+        log(`context ${ctx.updated ? 'updated' : 'unchanged'}: ${ctx.summary}`)
+      } else {
+        log('context agent was skipped or died (non-fatal) — the next run refreshes the context files')
+      }
+    } catch (err) {
+      log(`context maintenance failed (non-fatal): ${String((err && err.message) || err)}`)
+    }
+    return { status: 'fixed', diagnosis, fixBranch, promotions, hypothesesTested: tested.length, tokensSpent: budget.spent() }
   }
   if (check.exitCode === 125) {
     // Cannot-test is not "still red": the committed fix is unverified, and a

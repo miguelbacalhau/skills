@@ -1,5 +1,5 @@
 ---
-description: Set up a repository's layout for orca runs — the bare-repo-with-worktrees structure with a default-branch worktree that orca:feature's pre-flight requires. Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orca runs, or when the pre-flight's layout gate (BARE_REPO) failed. Layout only: machine and session tooling (Codex CLI, MCP timeout, permissions) is orca:doctor's job. Interactive and consent-per-step — it restructures repositories, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
+description: Set up a repository's layout for orca runs — the bare-repo-with-worktrees structure with a default-branch worktree that orca:feature's pre-flight requires — plus an optional final step seeding the machine-local project context (.orca/map.md and decisions.md). Use when the user wants to prepare a new repository, an existing conventional checkout, or a fresh clone for orca runs, or when the pre-flight's layout gate (BARE_REPO) failed. Layout only: machine and session tooling (Codex CLI, MCP timeout, permissions) is orca:doctor's job. Interactive and consent-per-step — it restructures repositories, so every mutating action is confirmed first. Do not use to write a brief or run a feature.
 args: <path or clone URL, optional>
 user-invocable: true
 disable-model-invocation: true
@@ -97,7 +97,33 @@ Nothing in this touches history, refs, remotes, or config beyond `core.bare` —
 
 ## Step 3: Verify
 
-Re-run the pre-flight. `BARE_REPO` must now pass — that is this skill's deliverable. Report the machine lines too (`REVIEWER`, and `CODEX` as `PASS | FAIL | SKIPPED`): they cost nothing to relay, but a failing machine gate is fixed by **orca:doctor**, not here. Close by pointing at what comes next: `/orca:doctor` if a machine gate failed, then `/orca:feature` to capture a feature's intent and run it.
+Re-run the pre-flight. `BARE_REPO` must now pass — that is this skill's deliverable. Report the machine lines too (`REVIEWER`, and `CODEX` as `PASS | FAIL | SKIPPED`): they cost nothing to relay, but a failing machine gate is fixed by **orca:doctor**, not here. Close by pointing at what comes next: `/orca:doctor` if a machine gate failed, then `/orca:feature` to capture a feature's intent and run it — after the optional seeding below.
+
+## Step 4: Seed the project context (optional, consented)
+
+Offer — never default — to seed the machine-local project context the runs consume: two files at `<repo-root>/.orca/` top level, outside every worktree and never committed. `map.md` is a codebase map at architecture altitude (module boundaries, entry points, build/test commands, conventions, known gotchas — no function-level detail), hard-capped at ~200 lines, headed by a commit stamp; `decisions.md` is the decision log, which starts empty. Both are caches over what git already shares — the map over the code, the log over commit-message history — so they are safe to delete and rebuild, and runs refresh them automatically; seeding here just spares the first run the sweep. State that and get consent; declining is fine — the first run seeds lazily instead.
+
+On consent, spawn **one deep exploration subagent** — the only full-project sweep the design ever performs — to explore the default worktree read-only and write `<repo-root>/.orca/map.md`:
+
+```markdown
+# Codebase map
+
+**As of:** <short-sha of the default branch tip>
+
+<sections at the author's discretion: modules, entry points,
+build & test, conventions, gotchas — file paths welcome, line
+numbers and function bodies not>
+```
+
+Then create `<repo-root>/.orca/decisions.md` yourself, header only, same stamp:
+
+```markdown
+# Decision log
+
+**As of:** <short-sha>
+```
+
+An empty repository (the new-repository case) has nothing to map — skip the offer and say why.
 
 ## Guidelines
 

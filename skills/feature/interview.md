@@ -21,6 +21,8 @@ Interview the user, in as many rounds as it takes. The brief is the run's entire
 
 Push back. Play devil's advocate on scope, hunt for unstated non-goals, name the ambiguities the user has not noticed and make them choose. Every ambiguity resolved here is one the autonomous run will not have to guess at against the doubt rule.
 
+If the machine-local project context exists — `<repo-root>/.orca/decisions.md` and `.orca/map.md` — read it before the later rounds and interview decision-aware: a recorded decision the idea seems to touch is worth a direct question ("the decision log says the auth module deliberately has no middleware — is that changing?"). The files are hints from a snapshot, not ground truth; a decision the user overturns here becomes brief content, never an edit to the log.
+
 Stay at intent level. Do not explore the codebase deeply — recording the files or integration points the user names is fine, but grounding the intent in code is the spec stage's job, with fresh context and real exploration. If the discussion turns into reading source at length, the conversation has drifted from *what* into *how*; steer it back.
 
 ## Step 2: Early pre-flight (optional, never blocking)

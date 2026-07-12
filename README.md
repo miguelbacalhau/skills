@@ -25,6 +25,7 @@ The deliverable of a run is a branch on an integration worktree — `feature/<sl
 - [Anatomy of a run](#anatomy-of-a-run)
 - [Anatomy of a debug run](#anatomy-of-a-debug-run)
 - [Repository layout](#repository-layout)
+- [Project context](#project-context)
 - [Stage agents](#stage-agents)
 - [Configuration](#configuration)
 - [Permissions and autonomy](#permissions-and-autonomy)
@@ -56,7 +57,7 @@ State lives in files, never in conversation memory: the brief, the spec with its
 | `MCP_TOOL_TIMEOUT` | Codex-only, like the row above: set to `1200000` (~20 min) in a Claude Code settings `env` block, so Codex reviews are not killed at the default MCP tool timeout. A plugin cannot ship session env, so `/orca:doctor` writes it for you. |
 | Permission mode | Runs need `bypassPermissions` for the session — see [Permissions and autonomy](#permissions-and-autonomy). |
 
-Everything else — the thirteen stage agents and the codex MCP server registration — ships inside the plugin itself; there is nothing to install per repository beyond the layout.
+Everything else — the fourteen stage agents and the codex MCP server registration — ships inside the plugin itself; there is nothing to install per repository beyond the layout.
 
 ## Installation
 
@@ -230,9 +231,11 @@ Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `lo
    ├─ 4. Work loop (Workflow tool)  deterministic script, per readiness wave:
    │       plan ∥ ──► reconcile ──► [escalate/amend once] ──► per item:
    │       worktree ► implement ► review (codex or claude) ► fix ► re-review ► commit ► merge
-   │       …then, after the loop drains: integrate (verify the assembled feature)
+   │       …then, after the loop drains: integrate (verify the assembled
+   │       feature) ──► context (fold the run into the project context)
    └─ 5. Report                     report.md: shipped/cut/blocked, deviations,
-                                    integration verification, follow-ups, landing
+                                    integration verification, follow-ups,
+                                    knowledge worth promoting, landing
 ```
 
 **Pre-flight** (`scripts/preflight.sh`, read-only, also run early during the interview) prints one machine-readable line per gate: `BARE_REPO`, a `REVIEWER: codex|claude (pinned|detected)` line resolving which reviewer the run uses, `CODEX` (binary ≥ 0.142.5, authenticated, `MCP_TOOL_TIMEOUT` set — checked only when the resolved reviewer is codex, `SKIPPED` otherwise), an informational `TRUNK_CANDIDATE`, and a final `RESULT` mirrored by the exit code. On any `FAIL` the run does not start; remediation goes through `/orca:init` for the layout gate and `/orca:doctor` for the machine gates.
@@ -245,7 +248,7 @@ Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `lo
 
 **Integration verification** runs after the loop drains: a dedicated agent builds, tests, and exercises each spec feature end to end in the integration worktree, judging against the spec's Outcome and Features — looking specifically at the seams where items compose. Small integration bugs are fixed, review-checked, and committed; larger mismatches are reported as gaps.
 
-**The report** (`report.md`) is the durable record: shipped items with commit hashes, deviations mirroring the spec's Decisions log, blocked items with the decision each waits on, per-feature integration results, follow-ups sourced from the plans' Deviations sections, and the landing command.
+**The report** (`report.md`) is the durable record: shipped items with commit hashes, deviations mirroring the spec's Decisions log, blocked items with the decision each waits on, per-feature integration results, follow-ups sourced from the plans' Deviations sections, knowledge the context agent flagged for human promotion, and the landing command.
 
 ## Anatomy of a debug run
 
@@ -269,6 +272,7 @@ The durable state is the **case** at `.orca/bug-cases/<slug>/`: `case.md` (the s
    │       ──► fix: nested work loop over a synthesized one-item contract
    │       ──► repro check ──► [red? one retry: revert → regenerate
    │                            → verify → diagnose → fix]
+   │       ──► [fixed: the context agent folds the fix into the project context]
    └─ 3. Report                 report.md; ledger appended; case closed
                                 (fixed/diagnosed) or left open, smarter
 ```
@@ -293,6 +297,8 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
 ├── orca-fix-<slug>/              # debug: fix integration worktree (branch fix/<slug>)
 └── .orca/
     ├── config.json                    # optional per-repo reviewer & model/effort overrides
+    ├── map.md                         # machine-local codebase map (cache; see Project context)
+    ├── decisions.md                   # machine-local decision log (cache; see Project context)
     ├── feat-briefs/                   # unconsumed feature briefs (drafts/ for parked ones)
     ├── bug-cases/<slug>/              # open bug cases: case.md, repro.sh, ledger.md, evidence/
     ├── YYYYMMDD-HHMMSS-feat-<slug>/   # one directory per feature run
@@ -312,9 +318,22 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
 
 Two naming namespaces, deliberately different: `orca-*` **directory** names are local scratch — the cleanup and discovery story via `git worktree list` — and never enter git; the **branch** names that land in history and on GitHub (`feature/<slug>[-<ID>]`, `fix/<slug>[-<ID>]`) are neutral and carry no orca trace, while throwaway `bug/<slug>*` branches never merge at all. `.orca/` sits outside every worktree, so its contents cannot be committed by accident. Inside `.orca/`, every artifact is verb-prefixed — `feat-briefs/` and `feat-` run directories for the feature verb, `bug-cases/` and `bug-` run directories for the debug verb — so a bare `ls .orca/` reads unambiguously.
 
+## Project context
+
+Runs used to start blind: every spec, plan, and hypothesize agent re-explored the repository from scratch, and nothing a run learned or decided survived it. Two machine-local files at the top of `.orca/` fix that — consumed at run start, maintained at run end, and **never committed**:
+
+- **`map.md`** — a codebase map at architecture altitude only: module boundaries, entry points, build/test commands, conventions, known gotchas. Hard-capped at ~200 lines (the maintainer prunes, not only appends), headed by a commit stamp `**As of:** <short-sha>`.
+- **`decisions.md`** — the decision log: one `chose X over Y: <reason>` entry per load-bearing decision, with date, run id, and the commit that carries it. Append-mostly; a reversal is a new entry pointing at the old one.
+
+The design rule that makes per-machine copies safe is **derivability**: both files are caches over a source of truth git already shares. The map is a cache over the code — any copy self-heals via `git diff <stamp>..HEAD`. The decision log is a cache over commit-message history: the runs write their load-bearing decisions into commit and merge-commit bodies in neutral prose (item-scoped rationale in item commits, run-scoped in merge commits — never both), so a teammate's orca reconstructs the log by catching up with a full `git log <stamp>..HEAD` — full, not `--first-parent`, because the no-ff topology puts item commits on each merge's second parent, and a first-parent walk would see only the run-scoped half. `--first-parent` remains the *human's* run-level view of an orca-built branch: the merge topology is load-bearing, not cosmetic. Locally-written entries keep interview/spec fidelity; reconstructed ones carry commit-message fidelity — both are enough for cross-run consistency.
+
+The lifecycle: `/orca:init` optionally seeds `map.md` with one deep exploration sweep (the only full-project sweep the design performs; a first run with no map seeds lazily instead). Each run start compares the stamps to the trunk tip — equal means skip, stale means one cheap catch-up agent. Consuming agents (spec, plan, hypothesize, diagnose, the interviews) receive both files as **hints, not ground truth** — "where to look first; verify anything you build on" — because a stale map trusted blindly is worse than no map. At run end a dedicated `context` agent folds the run's artifacts into both files: it distills what the run already learned, never re-explores, deletes what the diff invalidated, and advances the stamps. Rule-shaped knowledge ("never install X via npm") is never absorbed into the files — it surfaces in the run report under **Knowledge worth promoting**, for the human to commit into CLAUDE.md or real documentation under their own name. Orca never writes CLAUDE.md.
+
+Delete both files any time; runs rebuild them. Nothing about this touches the repository's committed content — the commit messages the log rides on read as a careful human's history.
+
 ## Stage agents
 
-Thirteen agents ship in the plugin (`agents/<stage>.md`, loaded as `orca:<stage>`). Each runs with its own context window and only the per-item values it needs; context passes between stages through artifact files, never relayed summaries.
+Fourteen agents ship in the plugin (`agents/<stage>.md`, loaded as `orca:<stage>`). Each runs with its own context window and only the per-item values it needs; context passes between stages through artifact files, never relayed summaries.
 
 The first nine serve feature runs — and, `spec` excepted (the diagnose agent writes the fix tail's contract, so no spec agent ever runs there), the fix tail of a diagnose-and-fix debug run:
 
@@ -339,9 +358,15 @@ The last four serve debug runs:
 | `verify` | Attacks one hypothesis in its own throwaway worktree — instrument, bisect, refute; verdicts need evidence | sonnet | high |
 | `diagnose` | The judge: merges verdicts into a root-cause diagnosis and, in scope, the synthesized fix contract | opus | high |
 
+And one serves both verbs, at the tail of a run that landed work:
+
+| Stage | Role | Default model | Default effort |
+|---|---|---|---|
+| `context` | Folds the run's artifacts into the machine-local project context (map + decision log); distills, never re-explores | haiku | low |
+
 A run uses exactly one of `review-codex` / `review-claude`, chosen by the resolved reviewer at launch. The `/orca:config` stage key for both is `review` — the overrides apply to whichever reviewer agent is active.
 
-Override any of these per repository with [`/orca:config`](#orcaconfig-assignments--reset). The workflow's internal helper agents (reconciliation, escalation) are not configurable — their cost/judgment profile is part of the loop's design.
+Override any of these per repository with [`/orca:config`](#orcaconfig-assignments--reset) — except `context`, which, like the workflow's internal helper agents (reconciliation, escalation), is not configurable: its cost/judgment profile is part of the loop's design.
 
 ## Configuration
 
@@ -436,6 +461,6 @@ This repository previously shipped the same workflow as symlink-installed skills
 | `scripts/review.sh` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
-| `agents/` | The thirteen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`). |
+| `agents/` | The fourteen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context). |
 | [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) *(separate repository)* | The Neovim companion: `:OrcaReview` reviews a branch's merge-base diff in your own editor — opened by `/orca:review`. Dependency-free, installs like any plugin; `/orca:doctor` checks it and prescribes the install. |
 | [orca.vscode](https://github.com/miguelbacalhau/orca.vscode) *(separate repository)* | The VS Code companion: an "Orca: Review" session walks the same merge-base diff — one native diff at a time, ✓ checkboxes in the Source Control sidebar — opened by `/orca:review` via `code --open-url`. Installed from the release VSIX; `/orca:doctor` checks it and prescribes the install. |
