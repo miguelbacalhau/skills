@@ -61,6 +61,11 @@ In **item** mode:
   implements or consumes — read them from it, not from the plan.
   Intent and recorded Deviations: {{RUN_DIR}}/plans/{{ID}}.md.
   This item owns: {{OWNED_FILES}}.
+  The subject is `git diff HEAD` plus untracked files. An empty
+  subject — no diff, no untracked files — is never a clean pass for
+  an item that claims an implementation: report exactly one Critical
+  finding (file and line null) stating the item produced no
+  reviewable change.
   ```
 
   where `{{OWNED_FILES}}` is the comma-separated owned-files list from your task message, or `the files its plan names` when none were given.

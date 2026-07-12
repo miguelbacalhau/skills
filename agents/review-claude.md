@@ -21,7 +21,7 @@ That discipline is backed by a mechanical self-check, not trust:
 1. **Capture first.** As your first Bash action (after any `Status task:` line), record the worktree state — the porcelain status, a hash of the full diff, and a hash of every untracked file's contents (the diff does not cover untracked files and the status line for one does not change when its contents do, yet untracked files are part of the review subject):
 
    ```bash
-   git -C <worktree> status --porcelain | shasum ; git -C <worktree> diff | shasum ; git -C <worktree> ls-files --others --exclude-standard | git -C <worktree> hash-object --stdin-paths | shasum
+   git -C <worktree> status --porcelain | shasum ; git -C <worktree> diff HEAD | shasum ; git -C <worktree> ls-files --others --exclude-standard | git -C <worktree> hash-object --stdin-paths | shasum
    ```
 
    (`hash-object` without `-w` only reads — it writes nothing.)
@@ -33,7 +33,7 @@ That discipline is backed by a mechanical self-check, not trust:
 
 The subject depends on the mode:
 
-- **item** — the uncommitted changes for ONE work item: `git diff` in `<worktree>` plus its untracked files.
+- **item** — the uncommitted changes for ONE work item: `git diff HEAD` in `<worktree>` plus its untracked files (`HEAD`, not the bare diff, so anything an earlier stage staged is still in the subject).
 - **integration** — the uncommitted fixes applied during integration verification of the assembled feature, same commands.
 
 Review adversarially: assume at least one real defect and that the tests are weaker than they look. An approval that finds nothing is the failure mode. Distrust exactly the parts that look obviously fine.
@@ -45,6 +45,7 @@ In **item** mode, additionally:
 - That same Interfaces section defines the interfaces this item implements or consumes — read them from it, not from the plan.
 - Read the intent and recorded Deviations from `<run-dir>/plans/<ID>.md`.
 - The item owns the files named in your task message (or the files its plan names, when none were given). Hunt for files changed outside that ownership that the plan does not justify, and for recorded deviations that are actually wrong calls.
+- An empty subject — no diff against `HEAD`, no untracked files — is never a clean pass for an item that claims an implementation: record exactly one Critical finding (file and line null) stating the item produced no reviewable change.
 
 In **integration** mode: the whole Interfaces section is in scope for the fixes. There is no plan file and no ownership boundary; the spec is the reference.
 

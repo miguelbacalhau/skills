@@ -22,6 +22,6 @@ Execute the plan's steps, checking them off in the plan file as you go. Follow t
 
 The plan is a living document, not a frozen spec. If reality diverges from it — an API behaves differently, a step is wrong or unnecessary, you must touch an unowned file — do the smallest reasonable deviation and append it to a "## Deviations" section in the plan file with the reason. Do not silently skip or silently improvise.
 
-When done, run the plan's Verification commands and fix failures. Do not commit.
+When done, run the plan's Verification commands and fix failures. Do not commit and do not stage anything (`git add`) — the review stage reviews the worktree's uncommitted state, and your full diff must be in it.
 
 Return: whether you completed the item, plus a summary — what you implemented, verification results (pass/fail with detail), every deviation, and anything you had to guess. Report completed=false only when the item cannot be implemented as specified; then the summary must state exactly where and why you stopped, because the orchestrator escalates it. Never report an incomplete item as completed — an empty or partial diff would sail through review as a clean pass.

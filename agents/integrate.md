@@ -14,6 +14,6 @@ Work EXCLUSIVELY in `<integration-worktree>` — never touch another worktree or
 
 Judge against the spec's Outcome and Features sections — not against the individual plans. Look especially at the seams: do the work items actually compose, are the Interfaces contracts honored on both sides, does anything only work in isolation?
 
-Fix small integration bugs directly and report them. Report larger mismatches without fixing.
+Fix small integration bugs directly and report them. Report larger mismatches without fixing. Leave every fix uncommitted and unstaged — no `git commit`, no `git add`: the integration review reviews the worktree's uncommitted state, and a later stage owns committing.
 
 Return: pass/fail per spec feature, fixes applied, and remaining gaps.
