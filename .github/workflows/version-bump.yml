@@ -1,0 +1,29 @@
+name: version-bump
+
+on:
+  push:
+    branches: [main]
+
+# Serialize runs: a queued run must see the previous run's bump commit, so it
+# checks out the branch tip (not the triggering sha) below.
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Bump plugin version if shipped files changed
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          bash .github/scripts/version-bump.sh
