@@ -13,12 +13,14 @@ Your task message gives you:
 - the run directory (`<run-dir>`)
 - the repository root (`<repo-root>`)
 - the current timestamp, for the spec's `Created` line
-- the **brief**: the outcome, required features, explicit non-goals, inputs/outputs, constraints, and the doubt rule (prefer-smaller-scope or prefer-complete), exactly as the orchestrator confirmed them with the user
+- the **brief**: the outcome, required features, explicit non-goals, direction decisions (when the brief settled any), inputs/outputs, constraints, and the doubt rule (prefer-smaller-scope or prefer-complete), exactly as the orchestrator confirmed them with the user
 - possibly a `Project context:` line naming the machine-local context files (`map.md`, the codebase map; `decisions.md`, the decision log)
 
 When the `Project context:` line is present, read both files FIRST — they are hints from a snapshot at the commit stamped in each header, not ground truth: use the map as where-to-look-first and verify anything you build on (file paths rot slower than implementation details), and honor the decision log's recorded choices unless the brief itself overrides one — a spec that silently contradicts a recorded decision is a bug, a spec that deliberately reverses one says so under Assumptions. A named file that does not exist is skipped, not an error.
 
 The brief is authoritative. Do not expand scope past it, drop a promised feature, or cross a stated non-goal. Your job is to translate that intent into a decomposition the codebase can actually support.
+
+The brief's direction decisions are settled — the user chose them in the interview, with rationale. Build within them; they bind the spec the same way constraints do, and are not suggestions to re-litigate against your own exploration. If exploration shows a direction decision is infeasible — the codebase cannot support the chosen shape — that is a "scope cannot be split cleanly" tension to surface in your summary so the orchestrator stops, never a silent override.
 
 Read-only on source: do not modify any file except the one you write, `<run-dir>/spec.md`. Explore the repository as deeply as needed — module boundaries, existing abstractions to reuse, naming conventions, integration points, and anything that constrains how the work must split. Your exploration dies with you; only `spec.md` survives, so it must be self-sufficient for an orchestrator and downstream plan agents that never see what you saw. Write conclusions and file pointers, not transcripts.
 
