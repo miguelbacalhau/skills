@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Guard against pushing plugin changes without a version bump: the plugin
+# updater keys its install cache on .claude-plugin/plugin.json's version, so a
+# push that changes shipped files but not the version makes later updates
+# silently serve the old code.
+#
+# When the outgoing range touches shipped paths and the version is unchanged,
+# the hook bumps the patch version, commits the bump, and aborts the push —
+# the new commit cannot join a push already in flight, so run `git push`
+# again. A manual bump anywhere in the range (any size: patch, minor, major)
+# satisfies the check and pushes straight through.
+#
+# One-time setup per clone: git config core.hooksPath githooks
+set -euo pipefail
+
+MANIFEST=".claude-plugin/plugin.json"
+SHIPPED=(skills agents scripts .claude-plugin .mcp.json)
+
+version_at() {
+  git show "$1:$MANIFEST" 2>/dev/null | sed -n 's/.*"version": *"\([^"]*\)".*/\1/p'
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [[ "$local_sha" == *[!0]* ]] || continue # deleting a remote ref
+  if [[ "$remote_sha" == *[!0]* ]] && git cat-file -e "$remote_sha" 2>/dev/null; then
+    base="$remote_sha"
+  else
+    # new remote ref (or a remote tip we don't have): diff against the
+    # nearest shared history with origin/main, or skip if there is none
+    base=$(git merge-base "$local_sha" origin/main 2>/dev/null) || continue
+  fi
+
+  changed=$(git diff --name-only "$base" "$local_sha" -- "${SHIPPED[@]}")
+  [[ -n "$changed" ]] || continue
+
+  old_ver=$(version_at "$base")
+  new_ver=$(version_at "$local_sha")
+  [[ -n "$new_ver" ]] || {
+    echo "pre-push: cannot read a version from $MANIFEST at $local_sha" >&2
+    exit 1
+  }
+  [[ "$old_ver" != "$new_ver" ]] && continue
+
+  # Shipped files changed, version did not. Auto-bump only when pushing the
+  # checked-out branch with a clean manifest; anything else is the user's call.
+  if [[ "$local_sha" != "$(git rev-parse HEAD)" ]]; then
+    echo "pre-push: $local_ref changes shipped plugin files with no version bump in $MANIFEST." >&2
+    echo "pre-push: bump the version on that branch, then push again." >&2
+    exit 1
+  fi
+  if ! git diff --quiet -- "$MANIFEST" || ! git diff --cached --quiet -- "$MANIFEST"; then
+    echo "pre-push: $MANIFEST has uncommitted changes — bump the version yourself, then push again." >&2
+    exit 1
+  fi
+  if [[ ! "$new_ver" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+    echo "pre-push: version '$new_ver' in $MANIFEST is not semver — bump it yourself, then push again." >&2
+    exit 1
+  fi
+
+  bumped="${BASH_REMATCH[1]}.${BASH_REMATCH[2]}.$((BASH_REMATCH[3] + 1))"
+  sed -i "s/\"version\": *\"$new_ver\"/\"version\": \"$bumped\"/" "$MANIFEST"
+  git add "$MANIFEST"
+  git commit --quiet -m "chore: bump plugin version to $bumped"
+  echo "pre-push: shipped files changed with no version bump — bumped $new_ver -> $bumped and committed." >&2
+  echo "pre-push: the bump commit is not part of this push; run 'git push' again." >&2
+  exit 1
+done
+
+exit 0
