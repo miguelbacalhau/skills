@@ -134,7 +134,7 @@ The one feature verb — a dispatcher over `.orca` state. Triage looks at what i
 2. **A queued brief** — anything at the top level of `.orca/feat-briefs/`. Offers to run one, or to interview a new idea instead.
 3. **Nothing waiting** — interviews the idea into a brief, then asks once: run it now, or leave it queued?
 
-**The interview** sharpens a rough idea into a durable brief at `.orca/feat-briefs/<timestamp>-<slug>.md`. Before asking anything substantive it researches the subsystems the idea touches through an Explore subagent (the report stays behind the scenes; the main context never explores deeply), then interviews from that picture — opening with a reflection of the idea against the system as it exists, so tensions between the two surface in conversation, where changing course is cheap. The brief is the *entire* intent the run acts on — the run asks nothing beyond one confirmation — so the interview is deliberately adversarial about scope: it pushes back, hunts for unstated non-goals, and makes you resolve ambiguities now rather than leaving them for an autonomous run to guess at. Direction decisions it settles land in the brief with their rationale and bind the spec like constraints; the decomposition itself still belongs to the spec stage.
+**The interview** sharpens a rough idea into a durable brief at `.orca/feat-briefs/<timestamp>-<slug>.md`. Before asking anything substantive it researches the subsystems the idea touches through the dedicated `orca:research` agent (the report stays behind the scenes; the main context never explores deeply), then interviews from that picture — opening with a reflection of the idea against the system as it exists, so tensions between the two surface in conversation, where changing course is cheap. The brief is the *entire* intent the run acts on — the run asks nothing beyond one confirmation — so the interview is deliberately adversarial about scope: it pushes back, hunts for unstated non-goals, and makes you resolve ambiguities now rather than leaving them for an autonomous run to guess at. Direction decisions it settles land in the brief with their rationale and bind the spec like constraints; the decomposition itself still belongs to the spec stage.
 
 A brief records: **outcome**, **features**, **non-goals**, **inputs & outputs**, **constraints**, plus two run-controlling choices:
 
@@ -337,7 +337,7 @@ Delete both files any time; runs rebuild them. Nothing about this touches the re
 
 ## Stage agents
 
-Fifteen agents ship in the plugin (`agents/<stage>.md`, loaded as `orca:<stage>`). Each runs with its own context window and only the per-item values it needs; context passes between stages through artifact files, never relayed summaries.
+Sixteen agents ship in the plugin (`agents/<stage>.md`, loaded as `orca:<stage>`). Each runs with its own context window and only the per-item values it needs; context passes between stages through artifact files, never relayed summaries.
 
 The first nine serve feature runs — and, `spec` excepted (the diagnose agent writes the fix tail's contract, so no spec agent ever runs there), the fix tail of a diagnose-and-fix debug run:
 
@@ -374,9 +374,15 @@ And one serves `/orca:review`'s comment round trip, spawned conversationally by 
 |---|---|---|---|
 | `address` | Converts the user's open review comments into fixes and answers in the integration worktree; writes resolutions back into the notes file | opus | high |
 
+And one serves the feature interview's research step, spawned conversationally before any run exists:
+
+| Stage | Role | Default model | Default effort |
+|---|---|---|---|
+| `research` | Read-only analytical exploration of the subsystems a rough idea touches; reports current behavior, touched decisions, tensions, and unknowns to the interviewer | opus | high |
+
 A run uses exactly one of `review-codex` / `review-claude`, chosen by the resolved reviewer at launch. The `/orca:config` stage key for both is `review` — the overrides apply to whichever reviewer agent is active.
 
-Override any of these per repository with [`/orca:config`](#orcaconfig-assignments--reset) — except `context` and `address`, which, like the workflow's internal helper agents (reconciliation, escalation), are not configurable: their cost/judgment profiles are part of the design.
+Override any of these per repository with [`/orca:config`](#orcaconfig-assignments--reset) — except `context`, `address`, and `research`, which, like the workflow's internal helper agents (reconciliation, escalation), are not configurable: their cost/judgment profiles are part of the design.
 
 ## Configuration
 

@@ -12,18 +12,11 @@ The user provides a rough idea, usually as the `<idea>` argument to `/orca:featu
 
 Before asking the user anything substantive, build a picture of the part of the system the idea touches. All of it stays out of the main context — the same rule the run itself lives by: heavy exploration lives and dies in subagents.
 
-First, read the machine-local project context if it exists — `<repo-root>/.orca/map.md` and `.orca/decisions.md`. They are hints from a snapshot, not ground truth, but they seed the research scope: which subsystems the idea plausibly touches, and which recorded decisions it might rub against.
-
-Then spawn **one Explore subagent**, scoped by the idea — the subsystems it touches, never a full-project sweep. Ask it for a compact report covering:
-
-- how the touched parts currently work: behavior, flow, integration points;
-- decisions embedded in the code or recorded in `decisions.md` that the idea seems to touch;
-- **tensions**: places where the idea and the current system disagree — where the code as it stands fights the idea;
-- **unknowns**: things neither the idea nor the code decides.
+Spawn **one `orca:research` subagent**, passing: the repository root, the idea verbatim, and — when `<repo-root>/.orca/map.md` or `.orca/decisions.md` exists — a `Project context:` line naming whichever of the two exist. Only check that the files exist; do not read them in the main context — the agent scopes its own exploration from the idea plus the map, and its definition owns the report's shape: current behavior, decisions touched, tensions, unknowns.
 
 The report is context for you, the interviewer — never shown raw to the user, never persisted. Whatever matters from it lands in the brief through the conversation; the safety valve for researcher error is the opening reflection below, which states the picture of the current system explicitly enough that a wrong picture is visible and correctable in one exchange.
 
-If the Explore agent fails or the repository offers nothing to explore, this step is non-fatal: fall back to the intent-only interview — the discussion below still applies, minus the research-grounded reflection.
+If the `orca:research` agent fails or the repository offers nothing to explore, this step is non-fatal: fall back to the intent-only interview — the discussion below still applies, minus the research-grounded reflection.
 
 Research always runs, even when the `<idea>` argument is rich and detailed — a detailed idea still benefits from the tension list, and the cost is one subagent. What a rich idea changes is the *discussion's* depth, not the research (see pacing).
 
