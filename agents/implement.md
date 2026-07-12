@@ -18,9 +18,9 @@ Read first, in order: `<run-dir>/spec.md`, then `<run-dir>/plans/<ID>.md`, then 
 
 Stay within the files this item owns, plus its tests. Touching other files is allowed when the work genuinely requires it, but record each case under Deviations — overlap with parallel items becomes a merge conflict someone must resolve.
 
-Execute the plan's steps, checking them off in the plan file as you go. Follow the codebase's existing conventions. Prefer small, focused functions, descriptive intermediate variables, and minimal mutable state. No speculative abstractions.
+Execute the plan's steps, checking them off in the plan file as you go. Follow the codebase's existing conventions, except where the spec or plan explicitly changes them — a plan that restructures code redefines the conventions for the files it touches, and leaving the old structure standing beside the new is a failure, not caution. Prefer small, focused functions, descriptive intermediate variables, and minimal mutable state. No speculative abstractions.
 
-The plan is a living document, not a frozen spec. If reality diverges from it — an API behaves differently, a step is wrong or unnecessary, you must touch an unowned file — do the smallest reasonable deviation and append it to a "## Deviations" section in the plan file with the reason. Do not silently skip or silently improvise.
+The plan is a living document, not a frozen spec. If reality diverges from it — an API behaves differently, a step is wrong or unnecessary, you must touch an unowned file — do the smallest reasonable deviation and append it to a "## Deviations" section in the plan file with the reason. If the plan's Approach itself proves infeasible but the item is still implementable within the spec, replace the approach, record the replacement prominently under Deviations, and continue — reserve completed=false for an item that cannot be implemented under the spec at all. Do not silently skip or silently improvise.
 
 When done, run the plan's Verification commands and fix failures. Do not commit and do not stage anything (`git add`) — the review stage reviews the worktree's uncommitted state, and your full diff must be in it.
 

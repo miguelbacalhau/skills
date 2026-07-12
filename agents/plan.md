@@ -49,4 +49,6 @@ Write your plan to `<run-dir>/plans/<ID>.md`:
 - <Command to run and the expected result>
 ```
 
+A plan may direct deletion, renaming, or wholesale restructuring of existing code when the spec calls for it. Make removals explicit steps with the file paths — an implementer defaults to leaving old code in place unless told to remove it, and a replaced path that survives is a bug in the plan.
+
 Return a 3-5 sentence summary: approach, the files you will touch (confirm they match your declared ownership), and any conflict you found between the spec and codebase reality. If the item cannot be implemented as specified, say so plainly and explain why.

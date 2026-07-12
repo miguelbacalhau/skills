@@ -586,10 +586,11 @@ const escalatePrompt = issues =>
   `You are resolving plan-reconciliation issues for an orca run. Issues: ${issues.join('; ')}. ` +
   `Read ${runDir}/spec.md and the plans under ${runDir}/plans/. For each issue: if a fix preserves the ` +
   `spec's outcome, features, and non-goals (it changes only how, not what), AMEND — edit spec.md's ` +
-  `Interfaces yourself and append the decision to its "## Decisions" log, citing the Doubt Rule where ` +
+  `Interfaces yourself and append the decision to its "## Decisions" log as a one-line bullet tagged ` +
+  `with the affected item ids ("- (W3) chose X over Y: <reason>"), citing the Doubt Rule where ` +
   `it applied; list the item ids whose plans must be regenerated in "replan". When the spec's doubt rule ` +
   `is prefer-smaller-scope and an item's feature can be cleanly cut rather than blocked, cutting it is an ` +
-  `amendment: edit spec.md to remove the feature, record the cut in "## Decisions", and list that item in ` +
+  `amendment: edit spec.md to remove the feature, record the cut in "## Decisions" (same tagged-bullet format), and list that item in ` +
   `"cut". If every fix would change what was agreed, list those items in "blocked" with a one-line reason ` +
   `and the options the user must choose between. When an amendment declares a dependency between work ` +
   `items that the breakdown lacked, also report it in "addDeps" as {id, dependsOn: [ids]} — the scheduler ` +
@@ -646,13 +647,14 @@ const buildEscalatePrompt = (item, failure) =>
   `Read ${runDir}/spec.md, the plan ${runDir}/plans/${item.id}.md, and this item's latest review artifact ` +
   `under ${runDir}/reviews/ if one exists. Apply the escalation rule. action="rebuild" when a spec-level ` +
   `fix preserves the spec's outcome, features, and non-goals (it changes only how, not what): edit spec.md's ` +
-  `Interfaces yourself and append the decision to its "## Decisions" log, citing the Doubt ` +
+  `Interfaces yourself and append the decision to its "## Decisions" log as a one-line bullet tagged ` +
+  `with the affected item ids ("- (W3) chose X over Y: <reason>"), citing the Doubt ` +
   `Rule where it applied — the item is then re-planned and rebuilt once in its existing worktree. ` +
   `Never restructure the breakdown (add, split, merge, or rename work items): the scheduler executes only ` +
   `the item set it was launched with, so a restructure written into spec.md would silently never run — ` +
   `if only a restructure would fix this, choose "block". ` +
   `action="cut" when the doubt rule is prefer-smaller-scope and this item's feature can be cleanly cut ` +
-  `rather than blocked: edit spec.md to remove the feature and record the cut in "## Decisions". ` +
+  `rather than blocked: edit spec.md to remove the feature and record the cut in "## Decisions" (same tagged-bullet format). ` +
   `action="block" when every fix would change what was agreed; reason = one line plus the options the ` +
   `user must choose between. Never expand scope past a non-goal.`
 

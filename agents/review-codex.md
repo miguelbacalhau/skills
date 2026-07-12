@@ -33,6 +33,10 @@ there and the current text is the contract.
 
 Hunt for: bugs, broken edge cases, violations of the spec interfaces,
 regressions to surrounding code, missing or weak tests{{EXTRA_HUNTS}}.
+A removal the spec or plan calls for is not a regression — when they
+restructure existing behavior, hunt instead for remnants of the old
+implementation that should have been deleted: dead code paths, stale
+exports, both old and new mechanisms registered.
 Attack the tests specifically — the same model wrote the code and the
 tests, so a green run proves little; name the edge cases, error paths,
 and interface boundaries the suite does NOT exercise.
