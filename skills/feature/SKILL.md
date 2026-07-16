@@ -169,9 +169,12 @@ Set the spec status to `approved`. Create the integration worktree at the repo r
 
 ```bash
 git worktree add <repo-root>/orca-<slug> -b feature/<slug> <trunk-branch>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-<slug>
 ```
 
 The branch is `feature/<slug>` — a neutral namespace that reads as ordinary dev work on GitHub and leaves no orca trace in git history; the slug keeps it collision-unlikely. `worktree add -b` fails loudly if `feature/<slug>` already exists, never silently reusing it — if it does, pick a different slug and retry rather than reusing the existing branch.
+
+The `place` call links the user's secrets (`<repo-root>/.orca/secrets/`, the mirror-tree convention — the README documents it) into the fresh worktree as relative symlinks, so integration builds and tests find their `.env`s. It is idempotent and best-effort: a missing or empty secrets tree is a clean `OK` no-op, and per-file problems are typed skips, never a reason to stop the run — relay any `UNIGNORED:` or `SKIPPED_EXISTS:` lines to the user as one-way status.
 
 Completed items are merged into this branch, and `feature/<slug>` is the run's deliverable — the user lands it onto trunk themselves at the end. The run never checks out or writes the user's own worktree.
 
@@ -209,7 +212,8 @@ Workflow({
     integrationBranch: "feature/<slug>",
     items: [ { id: "W1", title: "…", deps: [], files: ["…"], taskId: "…" }, … ],  // verbatim from the spec's Work Breakdown, plus each item's status-task id
     reviewer: "<codex|claude>",  // the resolved reviewer held since Step 2 — always present
-    agents: { … }   // only when the block held since Step 2 is non-empty — passed verbatim
+    agents: { … },  // only when the block held since Step 2 is non-empty — passed verbatim
+    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — the loop runs secrets.sh place after every worktree add
   }
 })
 ```

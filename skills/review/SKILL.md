@@ -28,9 +28,10 @@ Exit 1 with a typed `FAIL:` (`NOT_GIT`, `NOT_BARE`) means there is nothing to re
 
   ```bash
   git worktree add <worktree> <branch>
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <worktree>
   ```
 
-  then re-run `discover` to pick up the path.
+  then re-run `discover` to pick up the path. The `place` call links the user's secrets (`.orca/secrets/`, the mirror-tree convention) into the fresh worktree as relative symlinks — part of the same consent as the add, and best-effort: typed skips (`UNIGNORED:`, `SKIPPED_EXISTS:`) are worth a mention, never a stop.
 
 **Unconsumed comments.** A `DELIVERABLE:` followed by a `NOTES:` line (path, then `open,addressed,answered` counts) has review comments waiting from an earlier session — the decoupled pick-up that covers the vscode tier and any session where the waiter died. When the open count is nonzero, offer the choice before the plain open: "the review of `<branch>` has N unaddressed comments — address them, or open the review again?" Addressing goes to Step 4's gate (lay out the per-comment plan first, then ask — the same three-way gate); re-opening proceeds to Step 2 with the comments intact. A `NOTES_VERSION:` line after a deliverable is a version skew — surface it as Step 4 describes before anything else touches that deliverable.
 
@@ -98,7 +99,7 @@ There is deliberately no machine re-review after addressing: the human re-runnin
 
 ## Guidelines
 
-- Never merge anything, and never write in a worktree or in `.orca/review-notes/` outside two sanctioned paths: the consented `git worktree add` in Step 1 (which touches no worktree that exists), and the consented addressing flow of Step 5 (the agent's fixes and notes snapshot, and the commit that follows). The deliverable is landed by the user's own hand.
+- Never merge anything, and never write in a worktree or in `.orca/review-notes/` outside two sanctioned paths: the consented `git worktree add` in Step 1 (which touches no worktree that exists — the secrets placement that follows it, writing only symlinks into that fresh worktree, is part of the same consent), and the consented addressing flow of Step 5 (the agent's fixes and notes snapshot, and the commit that follows). The deliverable is landed by the user's own hand.
 - One writer at a time: never write the notes file — and never start addressing — while an editor session may be live. The gate right after window death is the sequencing; the residual race (the user reopens nvim mid-addressing) is accepted, per the contract's sequential-workflow assumption.
 - Never edit `.orca/config.json` — pinning or clearing `editor`/`terminal` belongs to orca:config; a failed probe's install belongs to orca:doctor. Recommend both by name.
 - This is the *human* half of review. The automated adversarial review stage lives inside runs (`agents.review`, the `reviewer` key) and is not touched, configured, or replaced here — and addressing comments must stay convergent (small deltas the user re-reads inline at their anchors), never become an unplanned work loop.

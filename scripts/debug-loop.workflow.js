@@ -43,6 +43,14 @@
 //   fixTaskId    optional id of the fix work item's session task (created by
 //                the main conversation before launch under diagnose-and-fix);
 //                threaded into the nested work loop's item for live display
+//   pluginRoot   optional absolute path of the installed plugin root (the
+//                launching skill substitutes ${CLAUDE_PLUGIN_ROOT} — this
+//                script has no environment to resolve it from); when present,
+//                secrets.sh place runs after every per-hypothesis worktree
+//                add, and the nested work loop receives it verbatim for the
+//                fix item's worktrees. Absent (a resume of a pre-secrets
+//                launch) skips placement and keeps the worktree commands
+//                byte-identical to the old journal
 // }
 //
 // Return: { status: 'fixed'|'not-fixed'|'diagnosed'|'undiagnosed'|'no-repro',
@@ -91,6 +99,11 @@ if (reviewer !== 'codex' && reviewer !== 'claude')
   throw new Error(`args.reviewer must be "codex" or "claude" (got ${JSON.stringify(reviewer)}) — the skill resolves it before launch`)
 if (fixTaskId !== undefined && (typeof fixTaskId !== 'string' || !fixTaskId))
   throw new Error(`args.fixTaskId, when present, must be a non-empty string (got ${JSON.stringify(fixTaskId)})`)
+// Secrets placement needs the plugin root to find secrets.sh; optional so a
+// resume of a launch that predates the arg still replays instead of failing.
+const pluginRoot = parsedArgs.pluginRoot
+if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')))
+  throw new Error(`args.pluginRoot, when present, must be an absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
 
 // Per-stage model/effort overrides (args.agents). The stage vocabulary is the
 // ONE shared 12-key list — feature's stages plus debug's — kept in lockstep
@@ -282,13 +295,19 @@ const verifyOne = async (h, hypPath) => {
   // Same three-arrivals pattern as work-loop: a worktree or branch left by an
   // interrupted run is resumed, not a collision. -C the case worktree — the
   // repo root is only a git context via its .git pointer file.
+  // Every arrival gets secrets placement (idempotent), so the repro script
+  // finds its `.env`s in the throwaway worktree at every commit it visits.
+  const placeCmd = pluginRoot ? ` && bash "${pluginRoot}/scripts/secrets.sh" place "${wt}"` : ''
   const wtOut = await sh(
     `if [ -d "${wt}" ]; then echo WORKTREE_REUSED; ` +
     `elif git -C "${baseWt}" rev-parse -q --verify "refs/heads/${branch}" >/dev/null; then ` +
     `git -C "${baseWt}" worktree prune && git -C "${baseWt}" worktree add "${wt}" "${branch}" && echo BRANCH_RESUMED; ` +
-    `else git -C "${baseWt}" worktree add "${wt}" -b "${branch}" "${baseBranch}"; fi`,
+    `else git -C "${baseWt}" worktree add "${wt}" -b "${branch}" "${baseBranch}"; fi${placeCmd}`,
     `worktree:${h.id}`, 'Verify')
   if (wtOut.includes('WORKTREE_REUSED')) log(`${h.id}: resuming the worktree left by an interrupted run`)
+  for (const line of wtOut.split('\n').map(l => l.trim()))
+    if (/^(UNIGNORED|SKIPPED_EXISTS|SKIPPED_ERROR):/.test(line))
+      log(`${h.id}: secrets ${line.replace(/\t/g, ' ')}`)
 
   const short = h.statement.length > 60 ? `${h.statement.slice(0, 57)}…` : h.statement
   const v = await agent(
@@ -425,6 +444,7 @@ for (let round = 1; round <= 2; round++) {
       // with the diagnosis in hand — the nested loop must not double-run it.
       updateContext: false,
       ...(Object.keys(agentCfg).length ? { agents: agentCfg } : {}),
+      ...(pluginRoot ? { pluginRoot } : {}),
     })
   } catch (err) {
     log(`fix attempt ${round}: nested work loop failed: ${String((err && err.message) || err)}`)

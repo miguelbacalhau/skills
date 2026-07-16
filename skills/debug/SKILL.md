@@ -91,8 +91,12 @@ Create the run's worktrees at the repo root, branched from the confirmed trunk's
 
 ```bash
 git worktree add <repo-root>/orca-bug-<slug> -b bug/<slug> <trunk-branch>          # always: the case worktree
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-bug-<slug>
 git worktree add <repo-root>/orca-fix-<slug> -b fix/<slug> <trunk-branch>          # diagnose-and-fix only: the fix integration worktree
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-fix-<slug>    # diagnose-and-fix only
 ```
+
+Each `place` links the user's secrets (`<repo-root>/.orca/secrets/`, the mirror-tree convention — the README documents it) into the fresh worktree as relative symlinks, so the repro and the fix's builds find their `.env`s. Idempotent and best-effort: a missing or empty secrets tree is a clean `OK` no-op, per-file problems are typed skips — relay any `UNIGNORED:` or `SKIPPED_EXISTS:` lines as one-way status, never a reason to stop.
 
 The **case worktree** is where the repro is established, the hypothesize agent explores, and the workflow runs its git plumbing; the workflow creates the per-hypothesis worktrees (`orca-bug-<slug>-H1`, throwaway branches `bug/<slug>-H1`) off it itself and removes each after its verdict. The **fix integration worktree** is what the nested work loop merges into — `fix/<slug>` mirrors `feature/<slug>`: it reads as ordinary dev work and carries no orca trace in git, while the `orca-*` directory names stay local scratch. `worktree add -b` fails loudly on an existing branch; if `bug/<slug>` or `fix/<slug>` survives from an earlier interrupted run of **this same case**, reuse the existing worktree as-is instead of erroring — for anything else, pick a different slug.
 
@@ -115,7 +119,8 @@ Workflow({
     workLoopPath: "${CLAUDE_PLUGIN_ROOT}/scripts/work-loop.workflow.js",
     reviewer: "<codex|claude>",   // the resolved reviewer held since Step 1 — always present
     agents: { … },                // only when the held block is non-empty — passed verbatim
-    fixTaskId: "<id>"             // only when the fix status task was created
+    fixTaskId: "<id>",            // only when the fix status task was created
+    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — the loops run secrets.sh place after every worktree add
   }
 })
 ```

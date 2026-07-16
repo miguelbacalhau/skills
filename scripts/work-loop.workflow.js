@@ -38,6 +38,14 @@
 //                     the Integrate phase. The debug loop passes false into
 //                     its nested fix call: the debug run maintains the
 //                     context itself, with the diagnosis in hand
+//   pluginRoot        optional absolute path of the installed plugin root
+//                     (the launching skill substitutes ${CLAUDE_PLUGIN_ROOT}
+//                     — this script has no environment to resolve it from);
+//                     when present, secrets.sh place runs after every
+//                     worktree add, linking <repoRoot>/.orca/secrets/ into
+//                     the fresh worktree. Absent (a resume of a pre-secrets
+//                     launch) skips placement and keeps the worktree
+//                     commands byte-identical to the old journal
 // }
 //
 // Review prompts are not inputs: the reviewer agent (orca:review-codex driving
@@ -110,6 +118,12 @@ const integrationWt = `${repoRoot}/orca-${slug}`
 const reviewer = parsedArgs.reviewer
 if (reviewer !== 'codex' && reviewer !== 'claude')
   throw new Error(`args.reviewer must be "codex" or "claude" (got ${JSON.stringify(reviewer)}) — the run skill resolves it before launch`)
+
+// Secrets placement needs the plugin root to find secrets.sh; optional so a
+// resume of a launch that predates the arg still replays instead of failing.
+const pluginRoot = parsedArgs.pluginRoot
+if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')))
+  throw new Error(`args.pluginRoot, when present, must be an absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
 
 // Post-run context maintenance is on unless the caller opts out (the debug
 // loop's nested fix call does — the debug run maintains the context itself).
@@ -470,14 +484,22 @@ const buildItem = async item => {
   // collision); a fresh item. `worktree prune` before the re-add drops any
   // stale registration whose directory was deleted by hand, which would
   // otherwise fail the add as "already checked out".
+  // Every arrival gets secrets placement — place is idempotent, so re-running
+  // it over a resumed worktree's existing links is all-OK output.
+  const placeCmd = pluginRoot ? ` && bash "${pluginRoot}/scripts/secrets.sh" place "${wt}"` : ''
   const wtOut = await sh(
     `if [ -d "${wt}" ]; then echo WORKTREE_REUSED; ` +
     `elif git -C "${integrationWt}" rev-parse -q --verify "refs/heads/${branch}" >/dev/null; then ` +
     `git -C "${integrationWt}" worktree prune && git -C "${integrationWt}" worktree add "${wt}" "${branch}" && echo BRANCH_RESUMED; ` +
-    `else git -C "${integrationWt}" worktree add "${wt}" -b "${branch}" "${integrationBranch}"; fi`,
+    `else git -C "${integrationWt}" worktree add "${wt}" -b "${branch}" "${integrationBranch}"; fi${placeCmd}`,
     `worktree:${item.id}`, 'Build')
   if (wtOut.includes('WORKTREE_REUSED')) log(`${item.id}: resuming the worktree left by a previous run`)
   else if (wtOut.includes('BRANCH_RESUMED')) log(`${item.id}: re-created the worktree for the branch left by a previous run`)
+  // A secret that could not be placed fails exactly where it fails today —
+  // in the build — but with a breadcrumb in the run's logs instead of nothing.
+  for (const line of wtOut.split('\n').map(l => l.trim()))
+    if (/^(UNIGNORED|SKIPPED_EXISTS|SKIPPED_ERROR):/.test(line))
+      log(`${item.id}: secrets ${line.replace(/\t/g, ' ')}`)
 
   const impl = must(await agent(
     [`Worktree: ${wt}`, `Run directory: ${runDir}`,

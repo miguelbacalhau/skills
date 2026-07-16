@@ -302,6 +302,7 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
     ├── config.json                    # optional per-repo reviewer & model/effort overrides
     ├── map.md                         # machine-local codebase map (cache; see Project context)
     ├── decisions.md                   # machine-local decision log (cache; see Project context)
+    ├── secrets/                       # worktree secrets — a mirror tree linked into every run worktree (see below)
     ├── feat-briefs/                   # unconsumed feature briefs (drafts/ for parked ones)
     ├── review-notes/<key>.json        # orca.nvim review comments per deliverable branch (round-trip state)
     ├── bug-cases/<slug>/              # open bug cases: case.md, repro.sh, ledger.md, evidence/
@@ -320,7 +321,29 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
         └── fix/                       # the nested fix run: spec.md (synthesized), plans/, reviews/
 ```
 
-Two naming namespaces, deliberately different: `orca-*` **directory** names are local scratch — the cleanup and discovery story via `git worktree list` — and never enter git; the **branch** names that land in history and on GitHub (`feature/<slug>[-<ID>]`, `fix/<slug>[-<ID>]`) are neutral and carry no orca trace, while throwaway `bug/<slug>*` branches never merge at all. `.orca/` sits outside every worktree, so its contents cannot be committed by accident. Inside `.orca/`, every artifact is verb-prefixed — `feat-briefs/` and `feat-` run directories for the feature verb, `bug-cases/` and `bug-` run directories for the debug verb, `review-notes/` for the review verb — so a bare `ls .orca/` reads unambiguously. `review-notes/` is the one directory holding user-authored input rather than a cache, but like everything else in `.orca/` it is machine-local scratch and never enters git.
+Two naming namespaces, deliberately different: `orca-*` **directory** names are local scratch — the cleanup and discovery story via `git worktree list` — and never enter git; the **branch** names that land in history and on GitHub (`feature/<slug>[-<ID>]`, `fix/<slug>[-<ID>]`) are neutral and carry no orca trace, while throwaway `bug/<slug>*` branches never merge at all. `.orca/` sits outside every worktree, so its contents cannot be committed by accident. Inside `.orca/`, every artifact is verb-prefixed — `feat-briefs/` and `feat-` run directories for the feature verb, `bug-cases/` and `bug-` run directories for the debug verb, `review-notes/` for the review verb — so a bare `ls .orca/` reads unambiguously. `review-notes/` and `secrets/` are the two directories holding user-authored input rather than a cache, but like everything else in `.orca/` they are machine-local scratch and never enter git — and `secrets/` is the one thing in `.orca/` that is not safe to delete (see below).
+
+### Worktree secrets
+
+`git worktree add` materializes tracked files only, and secrets are by definition untracked — so a fresh worktree starts without the `.env`s and local credential files that builds, tests, and repro scripts need. The fix is one folder convention and nothing else: drop a file into `<repo-root>/.orca/secrets/`, and every worktree a run creates from then on has it, linked in right after the `worktree add`.
+
+There is no manifest and no config — **the tree is the mapping**. A secret's path inside `secrets/` is its destination path inside each worktree:
+
+```text
+.orca/secrets/.env               →  <worktree>/.env
+.orca/secrets/apps/api/.env      →  <worktree>/apps/api/.env
+.orca/secrets/config/local.json  →  <worktree>/config/local.json
+```
+
+Each file is placed as a **relative symlink**, so every worktree reads the one canonical copy: rotate a token in `.orca/secrets/.env` and every worktree — including a blocked item's, resumed days later — sees the new value immediately, and removing a worktree deletes only links, never a secret. `.orca/` sits outside every worktree (in the bare layout the repo root is not a git working directory at all), so the canonical files are structurally uncommittable — a stronger property than any gitignore rule. As a second gate on the linked side, a destination git would track is skipped loudly (`UNIGNORED:` in the run's logs) and never placed — keep the mirrored paths in `.gitignore`, as untracked secrets already should be. An existing real file at a destination is never overwritten.
+
+Populating the tree is yours to do, by hand — one `mv` per secret: on a fresh clone, drop files in as you obtain them; on a repo `/orca:init` converted, move the `.env`s the conversion preserved in your worktree (`mkdir -p .orca/secrets/apps/api && mv main/apps/api/.env .orca/secrets/apps/api/.env`). Runs place into every worktree **they** create and never write into yours — link your own worktree to the canonical files yourself, by hand (`ln -s ../.orca/secrets/.env main/.env`) or with the same script the runs use, safe on any worktree:
+
+```bash
+bash <plugin-root>/scripts/secrets.sh place <repo-root>/main
+```
+
+Two carve-outs to the usual `.orca/` story. Unlike `map.md` and `decisions.md`, **`secrets/` is not a rebuildable cache — deleting it is data loss**; it is exactly the thing to leave out of any `.orca/` cleanup. And placed secrets are readable by every stage agent working in a worktree — with the codex reviewer that can mean transit to a different model provider if a value ever drags into a diff or log — so keep **development** credentials here, never production ones.
 
 ## Project context
 
@@ -475,6 +498,7 @@ This repository previously shipped the same workflow as symlink-installed skills
 | `skills/feature/interview.md`, `skills/debug/interview.md` | The interview instructions, loaded only when a verb's triage lands on a new interview. |
 | `scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
 | `scripts/review.sh` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
+| `scripts/secrets.sh` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
 | `agents/` | The fourteen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context). |
