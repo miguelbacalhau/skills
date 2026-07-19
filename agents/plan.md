@@ -14,7 +14,9 @@ Your task message may include a `Status task:` line. Execute it exactly as writt
 
 Read-only on source: do not modify any source file. The only file you write is your plan, at `<run-dir>/plans/<ID>.md`. You cannot ask the user questions; when something is ambiguous, resolve it by applying the spec's Doubt Rule (prefer-smaller-scope or prefer-complete) together with the rest of the spec, and record the choice under Decisions.
 
-Read `<run-dir>/spec.md` first. Honor its Interfaces section exactly; never invent alternatives to the contracts it defines.
+Read `<run-dir>/spec.md` first. Honor its Interfaces section exactly; never invent alternatives to the contracts it defines. Its `## Decisions` log is part of the contract, not commentary: bullets tagged with your item's ID are binding amendments made after escalations — honor them exactly as you do the Interfaces section, including where they constrain seams or internals the Interfaces section leaves to you, and they win over anything an older plan or the current code does differently.
+
+Your task message may include a `Replan:` line. It means a previous plan for this item failed — cross-plan reconciliation or a mid-build escalation — and spec.md was amended in response; the line names the issues and where the superseded plan is archived. Your fresh plan must resolve every named issue. Never conclude from an archived or surviving plan file that the work is already done: that plan failed.
 
 Your task message may include a `Project context:` line naming the machine-local codebase map and decision log. Read them before exploring — hints from a snapshot at the commit stamped in each header, not ground truth: the map tells you where to look first, and the decision log's recorded choices constrain your plan the way the spec does. Verify anything you build on; a named file that does not exist is skipped, not an error.
 

@@ -117,7 +117,7 @@ Create the run directory at the project root — the directory that holds the ba
     ├── brief.md    # the consumed brief — the run's confirmed intent
     ├── spec.md     # requirements, interfaces, work breakdown, workflow runId
     ├── report.md   # final run report, written at the end
-    ├── plans/      # one plan file per work item, written by plan agents
+    ├── plans/      # one plan file per work item, written by plan agents; <ID>.round*.md are superseded plans archived at replan
     └── reviews/    # review findings artifacts (codex or claude), archived per round
 ```
 
@@ -239,7 +239,7 @@ The workflow runs in the background, but its `log()` lines (items merged, items 
 
 Reconcile the status tasks first, from the returned values — the stage agents' updates are best-effort, so the terminal states are set here: every `shipped` item's task → `status: "completed"` with the subject restored to the clean `Wn — <title>` (a backstop for a merge agent whose final update was skipped, which would also leave a stale ` · <stage>` suffix on the subject), every `cut` item's task → deleted, every `blocked` item's task → `status: "pending"` with the subject rewritten to `✗ blocked — Wn — <title> — <short reason>`, dropping any stage suffix (the task list has no failed state; a pending row with the marker beats a spinner that never stops). Items without a `taskId` have no task to touch.
 
-Write the run report to `<run-dir>/report.md` **first**, then relay its highlights to the user. The file is the durable record of the run: it outlives the conversation, so anyone resuming, auditing, or picking up a follow-up run reads it instead of scrolling back. Everything needed is at hand — the workflow's returned `shipped`, `cut`, `blocked`, `integration`, and `promotions` values, the spec's `## Decisions` log, and the `## Deviations` sections of the plan files under `<run-dir>/plans/`, where the fix agents record the Medium/Low findings they deferred and the findings rooted outside their item — the Follow-ups section is sourced from those Deviations, and Knowledge worth promoting from the returned `promotions`. Do not re-explore beyond these artifacts. Generate the completion timestamp with `date +"%Y-%m-%d %H:%M"`.
+Write the run report to `<run-dir>/report.md` **first**, then relay its highlights to the user. The file is the durable record of the run: it outlives the conversation, so anyone resuming, auditing, or picking up a follow-up run reads it instead of scrolling back. Everything needed is at hand — the workflow's returned `shipped`, `cut`, `blocked`, `integration`, and `promotions` values, the spec's `## Decisions` log, and the `## Deviations` sections of the plan files under `<run-dir>/plans/` (skip `<ID>.round*.md` — superseded plans archived at replan), where the fix agents record the Medium/Low findings they deferred and the findings rooted outside their item — the Follow-ups section is sourced from those Deviations, and Knowledge worth promoting from the returned `promotions`. Do not re-explore beyond these artifacts. Generate the completion timestamp with `date +"%Y-%m-%d %H:%M"`.
 
 ```markdown
 # Report: <idea summary>

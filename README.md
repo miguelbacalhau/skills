@@ -310,7 +310,7 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
     │   ├── brief.md                   # the consumed brief — moved here when the run starts
     │   ├── spec.md                    # spec, work breakdown, Decisions log, workflow runId
     │   ├── report.md                  # final run report
-    │   ├── plans/                     # one plan per item, with its Deviations section
+    │   ├── plans/                     # one plan per item, with its Deviations section; <ID>.round*.md archives superseded plans at replan
     │   └── reviews/                   # raw findings JSON per review round, plus comments-<ts>.json archives per addressing round
     └── YYYYMMDD-HHMMSS-bug-<slug>/    # one directory per debug run
         ├── hypotheses.md              # ranked candidates (hypotheses-2.md on the retry round)

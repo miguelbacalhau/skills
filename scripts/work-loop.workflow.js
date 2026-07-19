@@ -399,14 +399,33 @@ const statusLine = (item, stage, extra = '') => {
     `If the call fails or the tool is missing, skip it and proceed.${tail}`
 }
 
-const planItem = i => agent(
+// A replan carries a note naming what failed and a distinct label tag; a
+// first-round call passes neither, keeping its prompt and label byte-identical
+// to pre-replan journals so resumes still replay.
+const planItem = (i, replanNote = '', labelTag = '') => agent(
   [`Run directory: ${runDir}`,
    `Item: ${i.id} — ${i.title}`,
    `Owned files: ${i.files.join(', ')}`,
    `Integration worktree: ${integrationWt}`,
    contextLine,
-   statusLine(i, 'planning')].filter(Boolean).join('\n'),
-  tuned('plan', { agentType: 'orca:plan', label: `plan:${i.id}`, phase: 'Plan' }))
+   replanNote,
+   statusLine(i, replanNote ? 'replanning' : 'planning')].filter(Boolean).join('\n'),
+  tuned('plan', { agentType: 'orca:plan', label: `plan:${i.id}${labelTag}`, phase: 'Plan' }))
+
+// A superseded plan left at plans/<ID>.md reads as finished work to a fresh
+// planner — the W3 stall: the replan agent found its predecessor's plan on
+// disk, endorsed it as "already complete", and returned without applying the
+// spec amendment. Archive it review-style (<ID>.round0.md, first free slot)
+// before replanning. Fail-soft: the replan note independently declares any
+// surviving plan file superseded, so a failed mv degrades one guard, never
+// the wave.
+const archivePlan = async (i, tag) => {
+  const p = sq(`${runDir}/plans/${i.id}`)
+  try {
+    await sh(`for n in 0 1 2 3 ; do [ -e '${p}.round'$n'.md' ] || { mv '${p}.md' '${p}.round'$n'.md' ; break ; } ; done`,
+      `plan-archive:${i.id}${tag}`, 'Plan')
+  } catch (e) { log(`${i.id}: superseded plan not archived (${String((e && e.message) || e)}) — replanning over it`) }
+}
 
 // Commit with the attribution rule enforced against the repository itself, not
 // the agent's self-report: the actual `git log` message is what gets checked.
@@ -607,7 +626,8 @@ const reconcilePrompt = ids =>
 
 const escalatePrompt = issues =>
   `You are resolving plan-reconciliation issues for an orca run. Issues: ${issues.join('; ')}. ` +
-  `Read ${runDir}/spec.md and the plans under ${runDir}/plans/. For each issue: if a fix preserves the ` +
+  `Read ${runDir}/spec.md and the plans under ${runDir}/plans/ (files named <ID>.round*.md are ` +
+  `superseded archives of failed plans — ignore them). For each issue: if a fix preserves the ` +
   `spec's outcome, features, and non-goals (it changes only how, not what), AMEND — edit spec.md's ` +
   `Interfaces yourself and append the decision to its "## Decisions" log as a one-line bullet tagged ` +
   `with the affected item ids ("- (W3) chose X over Y: <reason>"), citing the Doubt Rule where ` +
@@ -623,6 +643,27 @@ const escalatePrompt = issues =>
   `with plus the moves you report structurally (replan, cut, blocked, addDeps), and a restructure written ` +
   `into spec.md alone would silently never run. If the only real fix is a restructure, list the affected ` +
   `items in "blocked" instead. Never expand scope past a non-goal.`
+
+// Replan prompts must differ from the round they replace: the planner needs
+// to know the previous plan failed and why, or nothing stops it from
+// reproducing the same answer — or endorsing the archived one. The note also
+// re-points it at the Decisions log, where an amendment's operative
+// instruction may live when the seam it governs is not in the Interfaces
+// section.
+const waveReplanNote = (id, issues) =>
+  `Replan: this item's previous plan failed cross-plan reconciliation, and spec.md was amended in ` +
+  `response — read its "## Decisions" log; bullets tagged ${id} are binding contract amendments, ` +
+  `including where they constrain internals the Interfaces section leaves to you. Reconciliation ` +
+  `issues: ${issues.join('; ')}. The superseded plan is archived at plans/${id}.round*.md — read it ` +
+  `to see what must change, then write a fresh plan resolving every issue above. Never conclude the ` +
+  `existing work is already correct: the previous plan FAILED, and a plans/${id}.md still on disk is ` +
+  `superseded, not evidence of completion.`
+const rebuildReplanNote = (id, failure) =>
+  `Replan: this item was built once and failed mid-build ("${failure}"); an escalation judged the ` +
+  `failure spec-rooted and amended spec.md in response — read its "## Decisions" log; bullets tagged ` +
+  `${id} are binding contract amendments. The superseded plan is archived at plans/${id}.round*.md — ` +
+  `read it to see what must change, then write a fresh plan that resolves the failure. The item's ` +
+  `worktree is kept and will be rebuilt from your new plan.`
 
 // Dependency amendments must land in the scheduler, not only in spec.md: pump()
 // orders builds from the in-memory `items`, so a dependency the escalation
@@ -714,7 +755,8 @@ const runWave = async wave => {
       .forEach(i => { state[i.id] = 'pending'; log(`${i.id} deferred: an amended dependency must merge first`) })
     const replan = live.filter(i => esc.replan.includes(i.id) && state[i.id] === 'active')
     if (replan.length) {
-      const second = await parallel(replan.map(i => () => planItem(i)))
+      await parallel(replan.map(i => () => archivePlan(i, '#2')))
+      const second = await parallel(replan.map(i => () => planItem(i, waveReplanNote(i.id, rec.issues), '#2')))
       second.forEach((p, idx) => { if (p === null || p === undefined) block(replan[idx].id, 'plan agent was skipped or died') })
     }
     live = wave.filter(i => state[i.id] === 'active')
@@ -765,7 +807,8 @@ const runItem = async item => {
       if (!esc || esc.action === 'block') return block(item.id, (esc && esc.reason) || reason)
       if (esc.action === 'cut') return cutItem(item.id, esc.reason)
       log(`${item.id}: spec amended after "${reason}" — replanning and rebuilding once`)
-      const p = await planItem(item)
+      await archivePlan(item, '#rebuild')
+      const p = await planItem(item, rebuildReplanNote(item.id, reason), '#rebuild')
       if (p === null || p === undefined) return block(item.id, 'plan agent was skipped or died during re-plan')
     }
   }
