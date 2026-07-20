@@ -18,11 +18,16 @@
 //   repoRoot          parent of the bare repo; all worktrees live here (absolute)
 //   slug              run slug; integration worktree is <repoRoot>/orca-<slug>
 //   integrationBranch feature/<slug> — item branches derive from it (${integrationBranch}-${id})
-//   items             [{ id, title, deps: [ids], files: [paths], taskId? }] from the Work
-//                     Breakdown; taskId is the id of the item's session task
-//                     (created by the main conversation before launch), updated
-//                     by the stage agents for live display — absent, the item
-//                     simply gets no status lines
+//   items             [{ id, title, deps: [ids], files: [paths], taskId?, retryNote? }]
+//                     from the Work Breakdown; taskId is the id of the item's
+//                     session task (created by the main conversation before
+//                     launch), updated by the stage agents for live display —
+//                     absent, the item simply gets no status lines. retryNote
+//                     is set only by orca:retry's relaunch over a finished
+//                     run's unmet items: a per-item note the planner receives
+//                     naming the prior round's blocked reason and archived
+//                     evidence — absent, prompts stay byte-identical to
+//                     pre-retry journals
 //   agents            optional { <stage>: { model?, effort? } } — per-stage
 //                     overrides from <repo-root>/.orca/config.json (written by
 //                     the orca:config skill, read by the run skill at launch),
@@ -104,6 +109,12 @@ if (badItems.length)
 const badTaskIds = items.filter(i => i.taskId !== undefined && (typeof i.taskId !== 'string' || !i.taskId))
 if (badTaskIds.length)
   throw new Error(`malformed work items: taskId, when present, must be a non-empty string: ${JSON.stringify(badTaskIds)}`)
+// retryNote: composed by the retry skill per unmet item on a retry launch —
+// a fresh run over the old run directory. Absent, prompts stay byte-identical
+// to current journals, so existing resumes still replay.
+const badRetryNotes = items.filter(i => i.retryNote !== undefined && (typeof i.retryNote !== 'string' || !i.retryNote))
+if (badRetryNotes.length)
+  throw new Error(`malformed work items: retryNote, when present, must be a non-empty string: ${JSON.stringify(badRetryNotes)}`)
 // "integration" is the reserved id of the integration-fixes review pass — a
 // work item with that id would collide with its artifact paths even though
 // the review mode is now passed explicitly.
@@ -401,13 +412,16 @@ const statusLine = (item, stage, extra = '') => {
 
 // A replan carries a note naming what failed and a distinct label tag; a
 // first-round call passes neither, keeping its prompt and label byte-identical
-// to pre-replan journals so resumes still replay.
+// to pre-replan journals so resumes still replay. A retry launch rides the
+// same seam: item.retryNote (composed by the retry skill) lands in the
+// prompt exactly like a replan note — absent, nothing changes.
 const planItem = (i, replanNote = '', labelTag = '') => agent(
   [`Run directory: ${runDir}`,
    `Item: ${i.id} — ${i.title}`,
    `Owned files: ${i.files.join(', ')}`,
    `Integration worktree: ${integrationWt}`,
    contextLine,
+   i.retryNote || '',
    replanNote,
    statusLine(i, replanNote ? 'replanning' : 'planning')].filter(Boolean).join('\n'),
   tuned('plan', { agentType: 'orca:plan', label: `plan:${i.id}${labelTag}`, phase: 'Plan' }))
@@ -467,7 +481,17 @@ const commitItem = async (wt, id, title, extraLines = []) => {
           `probe:${id}`, 'Merge')
         if (probe.includes('NOTHING_NEW')) {
           const prior = await tipAndSpan(wt, `${integrationBranch}..HEAD`, `message:${id}#prior`)
-          if (prior.clean) return { hash: base, message: prior.tip }
+          if (prior.clean) {
+            // A salvaged `wip:` tip passes the banned regex but marks a
+            // blocked round's partial work, never a finished item — rewrite
+            // it like an attribution violation. Amend, not reset+commit:
+            // there is nothing to stage, and only the tip needs the new
+            // message; a wip commit deeper in the span is honest history.
+            if (!/^wip:/i.test(prior.tip)) return { hash: base, message: prior.tip }
+            const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
+            await sh(`git -C "${wt}" commit --amend -m '${sq(fallback)}'`, `wip-rewrite:${id}`, 'Merge')
+            return { hash: await head('wip-rewrite'), message: fallback }
+          }
         }
         throw new Error('commit agent made no commit')
       }
@@ -491,8 +515,9 @@ const buildItem = async item => {
   const wt = `${repoRoot}/orca-${slug}-${item.id}`
   const branch = `${integrationBranch}-${item.id}`
   // Single leaf segment (…-W1, not …/W1): a git ref cannot be both a file and a directory.
-  // A blocked item keeps its worktree across runs, so a follow-up run resumes it
-  // here rather than failing on the collision.
+  // An interrupted run's worktree survives on disk and is resumed in place; a
+  // blocked item survives as its branch (worktree salvaged into a WIP commit
+  // at block time), picked up by the branch arrival below.
   // -C ${integrationWt}, not ${repoRoot}: the repo root is only a git context
   // via its .git pointer file, and when that file is absent git discovery
   // walks up from it — possibly into an enclosing repo. The integration
@@ -783,6 +808,28 @@ const runWave = async wave => {
   }
 }
 
+// Salvage a blocking item's worktree: commit whatever is in the tree as WIP
+// on the item branch (skip the commit when the index stays empty), then
+// remove the worktree — the branch is the recovery surface a retry round
+// resumes via the branch arrival in buildItem; the directory is just
+// clutter at the repo root. Best-effort under the same contract as the
+// merged-path cleanup: a failure here logs and never demotes or re-throws,
+// and an unfinished salvage leaves the worktree in place rather than
+// removing unsaved work. The WIP message is deterministic and passes the
+// `banned` regex; commitItem rewrites it if it ever surfaces as a tip.
+const salvageWorktree = async item => {
+  const wt = `${repoRoot}/orca-${slug}-${item.id}`
+  try {
+    await sh(
+      `if [ -d "${wt}" ]; then git -C "${wt}" add -A && ` +
+      `{ git -C "${wt}" diff --cached --quiet || git -C "${wt}" commit -m 'wip: ${item.id} — blocked, partial work' ; } && ` +
+      `git -C "${integrationWt}" worktree remove --force "${wt}" ; else echo NO_WORKTREE ; fi`,
+      `salvage:${item.id}`, 'Build')
+  } catch (err) {
+    log(`${item.id}: worktree salvage failed (non-fatal): ${String((err && err.message) || err)}`)
+  }
+}
+
 // Build one item, with at most one escalation-backed retry: a spec-rooted
 // failure (see `escalatable`) gets an amend-vs-block judgment, and an
 // amendment replans and rebuilds the item once in its kept worktree.
@@ -796,20 +843,21 @@ const runItem = async item => {
       return
     } catch (err) {
       const reason = String((err && err.message) || err)
-      // A blocked item keeps its worktree and branch for a follow-up run (SKILL: escalation rule).
-      if (attempt === 2 || !(err && err.escalatable)) return block(item.id, reason)
+      // A blocked item keeps its branch for a retry round (SKILL: escalation
+      // rule); the worktree is salvaged into a WIP commit on that branch.
+      if (attempt === 2 || !(err && err.escalatable)) { await salvageWorktree(item); return block(item.id, reason) }
       let esc = null
       try {
         // Escalation edits spec.md — same serialized section as wave reconciliation.
         esc = await serializedSpec(() => agent(buildEscalatePrompt(item, reason),
           { model: 'opus', effort: 'high', label: `escalate:${item.id}`, phase: 'Build', schema: BUILD_ESCALATE }))
       } catch (e) { /* fall through: a dead escalation agent means block */ }
-      if (!esc || esc.action === 'block') return block(item.id, (esc && esc.reason) || reason)
+      if (!esc || esc.action === 'block') { await salvageWorktree(item); return block(item.id, (esc && esc.reason) || reason) }
       if (esc.action === 'cut') return cutItem(item.id, esc.reason)
       log(`${item.id}: spec amended after "${reason}" — replanning and rebuilding once`)
       await archivePlan(item, '#rebuild')
       const p = await planItem(item, rebuildReplanNote(item.id, reason), '#rebuild')
-      if (p === null || p === undefined) return block(item.id, 'plan agent was skipped or died during re-plan')
+      if (p === null || p === undefined) { await salvageWorktree(item); return block(item.id, 'plan agent was skipped or died during re-plan') }
     }
   }
 }

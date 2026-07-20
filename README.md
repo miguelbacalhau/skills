@@ -9,8 +9,10 @@ A [Claude Code](https://claude.com/claude-code) plugin for autonomous, multi-age
                          # verify → diagnose → fix → repro check → report
 /orca:review             # review a deliverable in your editor; your comments round-trip
                          # (addressed on consent, resolutions rendered inline next review)
-/orca:followup           # audit a finished run's report against git, resolve its escalated
-                         # decisions, and queue the follow-up brief for /orca:feature
+/orca:retry              # finish a finished run's unmet items in the same run: audit against
+                         # git, resolve the blocked decisions with you, relaunch the work loop
+/orca:followup           # turn a finished run's optional follow-ups into the next brief
+                         # for /orca:feature (new intent, not recovery)
 /orca:init               # one-time repository layout setup      (interactive, consent per step)
 /orca:doctor             # one-time machine tooling setup        (interactive, consent per step)
 /orca:config             # optional per-repo reviewer & model/effort tuning
@@ -123,8 +125,12 @@ MCP servers load at session start, so after installing or enabling the plugin, *
 /orca:review
 git merge --no-ff feature/<slug>     # or fix/<slug>
 
-# 4. If the report left blocked items, escalated decisions, or follow-ups:
-#    audit the run, resolve the decisions, queue the next brief.
+# 4. If the report left blocked items: resolve their recorded decisions
+#    and finish them inside the same run, on the same branch.
+/orca:retry
+
+# 5. If it left optional follow-ups you want: select them into the next
+#    run's brief.
 /orca:followup
 ```
 
@@ -181,11 +187,17 @@ Without tmux (on the nvim path), or without either companion installed (`/orca:d
 
 Two config keys govern it, set via `/orca:config`: `editor` (`nvim`|`vscode`|`none`) and `terminal` (`tmux`|`none`, nvim path only), with the same semantics as `reviewer` — absent detects (nvim first, then vscode), a pin fails loudly instead of silently falling back, `none` opts out to the printed command.
 
+### `/orca:retry [run]`
+
+Finishes a finished run's unmet work items **inside the same run** — no new run directory, no new spec, no brief. Recovery never creates a run; only new intent does. It picks a finished feature run with leftovers (newest by default, or the one the argument names), audits it through the same read-only agent `/orca:followup` uses — reconciling the report's claims against the spec's work breakdown and git ground truth — then resolves every blocked item's recorded decision with you. That interview is the entry fee, on principle: the run's escalation agents already spent its bounded machine retries deciding each block could not be resolved within the spec, so a retry without new human input would reproduce it. You can also resurrect items the run cut autonomously (a machine-made scope reduction you never directly approved — overruling it restores scope the original brief contained), and a resolution may authorize the retried item to amend code an earlier item already merged.
+
+Your resolutions are appended to the run's own `spec.md` as binding Decisions bullets; the superseded plans, review findings, and report are archived in place (`plans/<ID>.round<N>.md`, `reviews/prev<N>/`, `report.round<N>.md`) so the failure evidence survives the next round; and the work loop relaunches over only the unmet items, on the same integration branch — each item carrying a retry note that points at its recorded failure evidence, and each surviving item branch (salvaged WIP commit included) resumed rather than restarted. The rewritten report keeps the whole-run picture, with a Prior rounds section naming the archived reports. An *interrupted* run (no report yet) is redirected to `/orca:feature`'s resume; a `clean` run has nothing to retry — its follow-ups are `/orca:followup`'s.
+
 ### `/orca:followup [run]`
 
-Turns a finished run's leftovers — blocked items, escalated decisions, deferred follow-ups — into the next run's brief. It picks a finished feature run (newest by default, or the one the argument names), then audits it through a dedicated read-only agent that reconciles the report's claims against the spec's work breakdown and git ground truth: which items verifiably merged (the integration branch's first-parent log, not the Shipped table), whether the deliverable branch still exists or was already landed, and what partial work survives in kept worktrees and branches. A run that blocked early is picked up from what actually happened, even if its report is optimistic — discrepancies are named to you plainly.
+Turns a finished run's *optional follow-ups* — deferred findings, known gaps, improvements the reviews flagged but did not block on — into the next run's brief. New intent, not recovery: unfinished items and escalated decisions are `/orca:retry`'s job, and an interrupted run is redirected to `/orca:feature`'s resume. It picks a finished feature run (newest by default, or the one the argument names), then audits it through a dedicated read-only agent that reconciles the report's claims against the spec's work breakdown and git ground truth: which items verifiably merged (the integration branch's first-parent log, not the Shipped table), and whether the deliverable branch still exists or was already landed — which decides what the new brief builds on. Discrepancies are named to you plainly.
 
-The discussion covers only what is genuinely open. Unfinished items are in by default — they were confirmed scope; you only get the chance to cut them, and corrections the report already recorded (a plan needing one named fix) carry as settled facts. The decisions the run escalated **must** be resolved — they are asked with the recorded options, and the follow-up run would hit the same wall without them. Deferred findings and known gaps are a selection: unselected ones stay deferred in the old report, losing nothing. The product is a standard brief queued in `.orca/feat-briefs/` — continuation facts (build on the existing integration branch, the prior spec and Decisions log as binding inputs, reusable plans, kept worktrees) land in its Direction and Constraints sections — and `/orca:feature` discovers, restates, and runs it like any other brief; this skill never launches a run itself. An *interrupted* run (no report yet) is redirected to `/orca:feature`'s resume instead, and a run whose follow-up brief already exists is surfaced rather than duplicated.
+The discussion is a selection, not an obligation: which follow-ups ride along; unselected ones stay deferred in the old report, losing nothing. The product is a standard brief queued in `.orca/feat-briefs/` — building on the existing integration branch or the trunk per the audit's landed-ness check, with the prior spec's Interfaces and Decisions log as binding inputs — and `/orca:feature` discovers, restates, and runs it like any other brief; this skill never launches a run itself. A run with unmet items is pointed at `/orca:retry` first — a follow-up brief never adopts unmet work or resolves escalated decisions — and a run whose follow-up brief already exists is surfaced rather than duplicated.
 
 ### `/orca:init [path or clone URL]`
 
@@ -259,7 +271,7 @@ Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `lo
 
 **The work loop** is completion-driven: an item launches the moment its dependencies merge and advances the moment its previous stage finishes. The only synchronization points are deliberate — a per-wave plan-reconciliation barrier (an opus agent checks the wave's plans against the spec Interfaces before anything builds) and the serialized merge queue. Bounded loops keep it from thrashing: max 2 fix rounds gated on Critical/High review findings; a deterministic commit-attribution check against the actual `git log` (two attempts, then a forced rewrite); one amendment round per reconciliation failure; at most one escalation-backed replan-and-rebuild per item. Codex reviews — and only codex reviews, which contend for one Codex auth — are throttled to 2 concurrent slots while everything else parallelizes freely; claude reviews ride the workflow's normal concurrency cap.
 
-**Escalation** applies one rule: **amend and continue** when a fix preserves the brief's outcome, features, and non-goals (the change touches only *how*) — recorded in the spec's `## Decisions` log with the doubt rule cited; **block and route around** when every fix would change *what* was agreed. A blocked item keeps its worktree and branch for a follow-up run and never stalls unaffected work. Under `prefer-smaller-scope`, cleanly cutting a feature counts as an amendment.
+**Escalation** applies one rule: **amend and continue** when a fix preserves the brief's outcome, features, and non-goals (the change touches only *how*) — recorded in the spec's `## Decisions` log with the doubt rule cited; **block and route around** when every fix would change *what* was agreed. A blocked item keeps its branch — whatever was in its worktree is salvaged into a WIP commit and the worktree removed — for a `/orca:retry` round, and never stalls unaffected work. Under `prefer-smaller-scope`, cleanly cutting a feature counts as an amendment.
 
 **Integration verification** runs after the loop drains: a dedicated agent builds, tests, and exercises each spec feature end to end in the integration worktree, judging against the spec's Outcome and Features — looking specifically at the seams where items compose. Small integration bugs are fixed, review-checked, and committed; larger mismatches are reported as gaps.
 
@@ -415,7 +427,7 @@ And one serves the feature interview's research step, spawned conversationally b
 |---|---|---|---|
 | `research` | Read-only analytical exploration of the subsystems a rough idea touches; reports current behavior, touched decisions, tensions, and unknowns to the interviewer | opus | high |
 
-And one serves `/orca:followup`, spawned conversationally over a finished run:
+And one serves `/orca:retry` and `/orca:followup`, spawned conversationally over a finished run:
 
 | Stage | Role | Default model | Default effort |
 |---|---|---|---|
@@ -471,12 +483,14 @@ The tradeoff is real and `/orca:feature` states it before starting: bypass mode 
 
 ## Interruption, resume, and cleanup
 
+Recovery is a three-surface split, one per honest end state, and **recovery never creates a run — only new intent does**: an *interrupted* run (no `report.md` yet) resumes from its journal via its verb's triage; a *finished run with unmet items* is finished inside the same run by `/orca:retry`; a *finished run's optional follow-ups* become a new brief via `/orca:followup`.
+
 Every agent call in the work loop is journaled, and the workflow `runId` is persisted the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation. Feature runs persist it to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time reviewer as `**Workflow reviewer:**` and the launch-time `agents` block when one was passed); debug runs persist `**Workflow run:**` plus the full launch args as `**Workflow args:**` to the open case's `case.md`. A resume replays those recorded values, never the current `.orca/config.json`.
 
 - **Interrupted run** (session death, kill, harness restart): invoke the same verb — `/orca:feature` triage discovers the interrupted run on disk via `spec.md`; `/orca:debug` triage finds it through its open case — and it offers the resume, re-invoking the workflow with the same script and args plus `resumeFromRunId`. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Never re-run stages conversationally.
-- **Blocked items** keep their worktree and branch deliberately — the report lists them for a follow-up run.
+- **Blocked items** keep their branch deliberately, with whatever was in the worktree salvaged as a `wip:` commit and the worktree removed — the report lists them for `/orca:retry`, which resolves the recorded decisions with you and relaunches only the unmet items in the same run, resuming those branches.
 - **Open cases persist by design**: a debug run that ends `no-repro`, `undiagnosed`, or `not-fixed` leaves its case in `.orca/bug-cases/` with the ledger appended, and the next `/orca:debug` starts from it.
-- **Abandoned run**: `git worktree list`, remove leftover `orca-*` worktrees and their `feature/<slug>*` (or `bug/<slug>*` / `fix/<slug>*`) branches. Prefer resuming.
+- **Abandoned run**: `git worktree list`, remove leftover `orca-*` worktrees and their `feature/<slug>*` (or `bug/<slug>*` / `fix/<slug>*`) branches. A leftover `orca-*` *directory* nowadays means an interrupted run or a pre-salvage blocked item — blocked items survive as branches only; everything else to clean up is branches. Prefer resuming.
 - **Pre-plugin runs cannot resume** under the plugin (agent types, worktree names, and journal keys all changed) — clean up their leftovers and start fresh from a new brief.
 
 ## Troubleshooting
@@ -512,14 +526,14 @@ This repository previously shipped the same workflow as symlink-installed skills
 |---|---|
 | `.claude-plugin/plugin.json` | The plugin manifest (`orca`). |
 | `.mcp.json` | Bundled codex MCP server registration — the global PATH `codex` binary, never npm. |
-| `skills/feature/`, `skills/debug/`, `skills/review/`, `skills/followup/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The seven skills. |
+| `skills/feature/`, `skills/debug/`, `skills/review/`, `skills/retry/`, `skills/followup/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The eight skills. |
 | `skills/feature/interview.md`, `skills/debug/interview.md` | The interview instructions, loaded only when a verb's triage lands on a new interview. |
 | `scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
 | `scripts/review.sh` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
 | `scripts/secrets.sh` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
-| `agents/` | The seventeen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context; `audit` reconciles a finished run for `/orca:followup`). |
+| `agents/` | The seventeen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context; `audit` reconciles a finished run for `/orca:retry` and `/orca:followup`). |
 | `.github/workflows/version-bump.yml`, `.github/scripts/version-bump.sh` | Version-bump guard, run by GitHub Actions on every push to main: if shipped files (`skills/`, `agents/`, `scripts/`, `.claude-plugin/`, `.mcp.json`) changed since the commit that introduced the current manifest version, the action commits a bump to main — sized by Conventional Commits across the uncovered range (`!`/`BREAKING CHANGE` → major, `feat` → minor, else patch). The plugin updater keys its install cache on that version, so an unbumped push makes updates silently serve stale code. The check is stateless, so a missed run self-heals on the next push; a manual bump of any size covers the changes that land with it. Pull after pushing shipped changes to pick up the bot's bump commit. |
 | [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) *(separate repository)* | The Neovim companion: `:OrcaReview` reviews a branch's merge-base diff in your own editor — opened by `/orca:review`. Dependency-free, installs like any plugin; `/orca:doctor` checks it and prescribes the install. |
 | [orca.vscode](https://github.com/miguelbacalhau/orca.vscode) *(separate repository)* | The VS Code companion: an "Orca: Review" session walks the same merge-base diff — one native diff at a time, ✓ checkboxes in the Source Control sidebar — opened by `/orca:review` via `code --open-url`. Installed from the release VSIX; `/orca:doctor` checks it and prescribes the install. |

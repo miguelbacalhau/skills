@@ -28,10 +28,17 @@
 #         AGENTS:<TAB><json|absent>      same adjacency rule
 #       unlaunched -> spec.md carries no runId line: the run died before
 #       its workflow launched (not resumable).
-#   DONE:<TAB><run-dir>
+#   DONE:<TAB><run-dir><TAB>clean|leftovers|unknown
 #       Finished feature runs: depth-1 spec.md WITH a sibling report.md.
 #       Emitted in directory order (timestamped names -> oldest first);
-#       consumed by orca:followup's run pick.
+#       consumed by orca:retry's and orca:followup's run picks. The third
+#       field routes recovery: `leftovers` when report.md's "## Blocked"
+#       section lists anything other than "None" (-> orca:retry has unmet
+#       items to finish), `clean` when it is "None" (-> orca:followup owns
+#       what remains), `unknown` when the section cannot be found (a
+#       hand-edited or pre-plugin report). Grep-only and fail-open: unknown
+#       still gets retry offered — the audit is the real check, this marker
+#       is routing sugar.
 #   BRIEF:<TAB><path>
 #       Queued briefs: .orca/feat-briefs/*.md, top level only (drafts/
 #       does not count).
@@ -78,6 +85,25 @@ record_value() { # <file> <label> <from-line>
   tail -n "+$3" "$1" | sed -n "s/^\*\*$2:\*\*[[:space:]]*//p" | head -1
 }
 
+# clean|leftovers|unknown for a finished run, from its report.md's
+# "## Blocked" section — every unmet item lands there (the pump's cascade
+# and budget stops all route through block()). Read-only and fail-open:
+# a missing section is `unknown`, never a guess.
+done_state() { # <report.md>
+  awk '
+    /^##[[:space:]]+Blocked[[:space:]]*$/ { found = 1; insec = 1; next }
+    insec && /^##[[:space:]]/ { insec = 0 }
+    insec { body = body $0 }
+    END {
+      if (!found) { print "unknown"; exit }
+      # Strip list markers, punctuation, and whitespace; an empty section or
+      # a lone "None" (however bulleted) means nothing is blocked.
+      gsub(/[-*.[:space:]]/, "", body)
+      if (body == "" || tolower(body) == "none") print "clean"
+      else print "leftovers"
+    }' "$1" 2>/dev/null || echo "unknown"
+}
+
 cmd_discover() {
   resolve_repo
   local orca="$repo_root/.orca"
@@ -85,14 +111,15 @@ cmd_discover() {
 
   # --- feature runs: .orca/*/spec.md at depth 1, no sibling report.md ---
   # A sibling report.md means the run finished; DONE: lines feed
-  # orca:followup's run pick, in directory order (timestamped names, so
-  # oldest first — the last line is the newest run).
+  # orca:retry's and orca:followup's run picks, in directory order
+  # (timestamped names, so oldest first — the last line is the newest run),
+  # each tagged with the report's blocked-section state.
   local spec dir run_ln
   for spec in "$orca"/*/spec.md; do
     [[ -f "$spec" ]] || continue
     dir="$(dirname "$spec")"
     if [[ -f "$dir/report.md" ]]; then
-      printf 'DONE:\t%s\n' "$dir"
+      printf 'DONE:\t%s\t%s\n' "$dir" "$(done_state "$dir/report.md")"
       continue
     fi
     run_ln="$(last_run_line "$spec")"
