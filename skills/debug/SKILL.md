@@ -125,7 +125,7 @@ Workflow({
 })
 ```
 
-Pass `args` as real JSON values, never stringified. Persist the resume handle immediately: append to the **case file** (`<case-dir>/case.md`) a `**Workflow run:** <runId>` line and a `**Workflow args:** <the args object as one-line JSON, exactly as passed>` line — the case file is the durable anchor (the run dir has no spec.md to carry them, and `diagnosis.md` is written far too late to be the record). The interruption that needs these lines — session death — erases the conversation, and `.orca/config.json` may drift; the recorded args, replayed verbatim, are what make a resume replay instead of re-run.
+Pass `args` as real JSON values, never stringified. The script takes an atomic per-run lease at launch: an existing `<run-dir>/.lock` means another writer holds the run directory and the launch fails typed, naming the owner metadata inside. A resume (`resumeFromRunId`) replays the lease from the journal and is never blocked by its own leftover lock. On the typed refusal, confirm with the user that the holding run is dead before removing `<run-dir>/.lock` and relaunching — never delete a lease unconfirmed. Persist the resume handle immediately: append to the **case file** (`<case-dir>/case.md`) a `**Workflow run:** <runId>` line and a `**Workflow args:** <the args object as one-line JSON, exactly as passed>` line — the case file is the durable anchor (the run dir has no spec.md to carry them, and `diagnosis.md` is written far too late to be the record). The interruption that needs these lines — session death — erases the conversation, and `.orca/config.json` may drift; the recorded args, replayed verbatim, are what make a resume replay instead of re-run.
 
 ### What the workflow does
 

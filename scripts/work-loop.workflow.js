@@ -1023,6 +1023,31 @@ const cyclic = items.filter(i => i.deps.some(d => reaches(d, i.id))).map(i => i.
 if (cyclic.length)
   throw new Error(`invalid work breakdown: dependency cycle through ${cyclic.join(', ')}`)
 
+// ---------- per-run lease (codex F-03) ----------
+// Two writers over one run dir — a second session launching the same run,
+// a relaunch racing a workflow that is still alive — would interleave
+// plans/, reviews/, and the integration worktree. Atomic mkdir is the
+// lock; the owner file inside carries pid-less metadata (what took it,
+// when). A resume (resumeFromRunId) replays this call from the journal
+// without re-executing, so the holder's own resume never self-deadlocks;
+// a FRESH launch over a live lease fails typed here, and the launching
+// skill's stale-lock recovery (user-confirmed rm of .lock) handles a
+// crashed holder. Released at the end of the run.
+const leaseNote = `orca work loop; slug=${slug}; branch=${integrationBranch}`
+const leaseOut = await sh(
+  `if mkdir '${sq(runDir)}/.lock' 2>/dev/null ; then ` +
+  `{ echo '${sq(leaseNote)}' ; date '+%Y-%m-%dT%H:%M:%S%z' ; } > '${sq(runDir)}/.lock/owner' ; echo LEASE_OK ; ` +
+  `else echo LEASE_HELD ; cat '${sq(runDir)}/.lock/owner' 2>/dev/null ; true ; fi`,
+  'run-lease', 'Plan')
+if (leaseOut.includes('LEASE_HELD'))
+  throw new Error(`run directory is leased to another writer — ${runDir}/.lock exists ` +
+    `(owner: ${leaseOut.split('\n').slice(1).join(' ').trim() || 'unknown'}). ` +
+    `If that run is dead, confirm with the user, remove ${runDir}/.lock, and relaunch.`)
+const releaseLease = async () => {
+  try { await sh(`rm -rf '${sq(runDir)}/.lock'`, 'run-lease-release', 'Context') }
+  catch (err) { log(`run lease not released (non-fatal): ${String((err && err.message) || err)}`) }
+}
+
 pump()
 await drained
 
@@ -1156,4 +1181,5 @@ if (updateContext && shipped.length) {
   }
 }
 
+await releaseLease()
 return { shipped, cut, blocked, integration, deliverableState, promotions, tokensSpent: budget.spent() }

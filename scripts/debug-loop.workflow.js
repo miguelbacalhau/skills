@@ -244,6 +244,31 @@ const shMarked = async (cmd, label, ph) => {
   return lines.slice(a + 1, b).join('\n')
 }
 
+// Single-quote a value into a relayed shell command.
+const sq = s => s.replace(/'/g, `'\\''`)
+
+// ---------- per-run lease (codex F-03; same design as work-loop) ----------
+// Atomic mkdir is the lock, owner metadata inside, refusal typed. A resume
+// replays this from the journal without re-executing (no self-deadlock); a
+// fresh launch over a live lease fails here, and the skill's user-confirmed
+// recovery removes a stale .lock. Released on every terminal return via
+// finish().
+const leaseNote = `orca debug loop; slug=${slug}; scope=${scope}`
+const leaseOut = await sh(
+  `if mkdir '${sq(runDir)}/.lock' 2>/dev/null ; then ` +
+  `{ echo '${sq(leaseNote)}' ; date '+%Y-%m-%dT%H:%M:%S%z' ; } > '${sq(runDir)}/.lock/owner' ; echo LEASE_OK ; ` +
+  `else echo LEASE_HELD ; cat '${sq(runDir)}/.lock/owner' 2>/dev/null ; true ; fi`,
+  'run-lease', 'Repro')
+if (leaseOut.includes('LEASE_HELD'))
+  throw new Error(`run directory is leased to another writer — ${runDir}/.lock exists ` +
+    `(owner: ${leaseOut.split('\n').slice(1).join(' ').trim() || 'unknown'}). ` +
+    `If that run is dead, confirm with the user, remove ${runDir}/.lock, and relaunch.`)
+const finish = async result => {
+  try { await sh(`rm -rf '${sq(runDir)}/.lock'`, 'run-lease-release', 'Check') }
+  catch (err) { log(`run lease not released (non-fatal): ${String((err && err.message) || err)}`) }
+  return result
+}
+
 // ---------- phase 1: the repro gate (hard) ----------
 phase('Repro')
 let needReproduce = true
@@ -275,13 +300,13 @@ if (needReproduce) {
     tuned('reproduce', { agentType: 'orca:reproduce', label: 'reproduce', phase: 'Repro', schema: REPRODUCE })),
     'reproduce')
   if (!rep.reproduced)
-    return { status: 'no-repro', notes: rep.notes, hypothesesTested: 0, tokensSpent: budget.spent() }
+    return finish({ status: 'no-repro', notes: rep.notes, hypothesesTested: 0, tokensSpent: budget.spent() }
   // The gate is deterministic, never the agent's self-report: run the script.
   // Exit 0 and exit 125 both fail it — a tree that cannot be tested is not a
   // reproduction.
   const check = await reproCheck(baseWt, 'repro-gate', 'Repro')
   if (check.exitCode === 0 || check.exitCode === 125)
-    return { status: 'no-repro',
+    return finish({ status: 'no-repro',
       notes: `reproduce agent reported success but repro.sh exits ${check.exitCode}${check.exitCode === 125 ? ' (cannot test)' : ''} in ${baseWt}: ${rep.notes}`,
       hypothesesTested: 0, tokensSpent: budget.spent() }
   log(`repro established (exit ${check.exitCode})`)
@@ -418,13 +443,13 @@ for (let round = 1; round <= 2; round++) {
     // verdicts and land in the ledger. In round 2 a committed failed fix may
     // sit on the fix branch (reverted on its tip) — return the branch so the
     // report and ledger keep the record.
-    return { status: 'undiagnosed', ...(fixCommitted ? { fixBranch } : {}),
+    return finish({ status: 'undiagnosed', ...(fixCommitted ? { fixBranch } : {}),
       hypothesesTested: tested.length, tokensSpent: budget.spent() }
   }
   diagnosis = diag.rootCause
   log(`diagnosed: ${diagnosis.length > 120 ? `${diagnosis.slice(0, 117)}…` : diagnosis}`)
   if (scope === 'diagnose-only')
-    return { status: 'diagnosed', diagnosis, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'diagnosed', diagnosis, hypothesesTested: tested.length, tokensSpent: budget.spent() }
 
   // ---------- phase 5: fix (nested work loop) ----------
   phase('Fix')
@@ -441,6 +466,13 @@ for (let round = 1; round <= 2; round++) {
     if (/^[0-9a-f]{40}$/.test(sha)) fixBaseSha = sha
     else log(`fix-base: relay returned something that is not a commit sha (${sha.slice(0, 80)}) — a failed attempt will not be reverted`)
   }
+  // The nested work loop takes its own lease on runDir/fix. Anyone
+  // legitimately writing there holds THIS run's lease on runDir (fix/ is
+  // inside it), so a .lock surviving from a crashed prior nested attempt
+  // is stale by construction — clear it or round 2 and resumes would
+  // refuse against a dead holder.
+  try { await sh(`rm -rf '${sq(runDir)}/fix/.lock'`, `fix-lease-clear#${round}`, 'Fix') }
+  catch { /* the nested launch will surface a real problem */ }
   let fixRun = null
   try {
     fixRun = await workflow({ scriptPath: workLoopPath }, {
@@ -471,7 +503,7 @@ for (let round = 1; round <= 2; round++) {
     const reason = [cut, blocked].filter(Boolean).join('; ') || 'the nested work loop landed no fix commit'
     log(`fix attempt ${round} did not land: ${reason}`)
     if (round === 2)
-      return { status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
+      return finish({ status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
         hypothesesTested: tested.length, tokensSpent: budget.spent() }
     lastFailedFix = { rootCause: diagnosis, reason, committed: false }
     continue
@@ -504,20 +536,20 @@ for (let round = 1; round <= 2; round++) {
     } catch (err) {
       log(`context maintenance failed (non-fatal): ${String((err && err.message) || err)}`)
     }
-    return { status: 'fixed', diagnosis, fixBranch, promotions, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'fixed', diagnosis, fixBranch, promotions, hypothesesTested: tested.length, tokensSpent: budget.spent() }
   }
   if (check.exitCode === 125) {
     // Cannot-test is not "still red": the committed fix is unverified, and a
     // retry premised on "the bug still reproduces" would build on a false
     // premise. Stop loudly instead.
     log(`repro.sh exits 125 in ${fixWt} — the tree cannot be tested; the fix is unverified`)
-    return { status: 'not-fixed', diagnosis, fixBranch,
+    return finish({ status: 'not-fixed', diagnosis, fixBranch,
       notes: `the committed fix is unverified: repro.sh exits 125 (cannot test) in ${fixWt} — repair the tree (build, dependencies), then re-run the case`,
       hypothesesTested: tested.length, tokensSpent: budget.spent() }
   }
   log(`fix attempt ${round}: repro.sh still exits ${check.exitCode} in ${fixWt}`)
   if (round === 2)
-    return { status: 'not-fixed', diagnosis, fixBranch, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'not-fixed', diagnosis, fixBranch, hypothesesTested: tested.length, tokensSpent: budget.spent() }
   // One internal retry: revert the failed attempt on the fix branch tip (a
   // single commit restoring the pre-attempt tree — the diff stays in history
   // as ledger evidence, but round 2 builds from a tree without the wrong fix
@@ -540,5 +572,5 @@ for (let round = 1; round <= 2; round++) {
 
 // Unreachable — both rounds return — but a linter-visible fallback beats an
 // undefined workflow result if the loop is ever edited.
-return { status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
+return finish({ status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
   hypothesesTested: tested.length, tokensSpent: budget.spent() }
