@@ -168,6 +168,12 @@ read_config_key() {
 # The review-notes key: the head branch with anything outside
 # [A-Za-z0-9._-] replaced by '-' — orca.nvim's rule, mirrored exactly.
 # The path is fixed by the plugin: <repo-root>/.orca/review-notes/<key>.json.
+# Known limitation: the sanitization can collide (feature/foo and
+# feature-foo share a key). Disambiguating (e.g. a branch-hash suffix) must
+# land in LOCKSTEP with orca.nvim and orca.vscode — they write these files
+# under the same rule — so it is deliberately not fixed unilaterally here;
+# a key change on one side alone would silently orphan the other side's
+# comments. Tracked as a cross-repo change.
 notes_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
 
 notes_path_for_branch() { # <branch> — requires resolve_repo to have run
@@ -251,7 +257,11 @@ cmd_discover() {
     if [[ "$branch" =~ -W[0-9]+$ ]]; then
       continue
     fi
-    worktree="$(printf '%s\n' "$wt_map" | awk -F'\t' -v b="$branch" '$1 == b { print $2; exit }')"
+    # Tab-safe: a worktree path may itself contain tabs, so everything
+    # after the FIRST tab is the path — never $2 of a tab-split line.
+    # (Branch names cannot contain tabs; the first tab is the separator.)
+    worktree="$(printf '%s\n' "$wt_map" | awk -v b="$branch" '
+      index($0, b "\t") == 1 { print substr($0, length(b) + 2); exit }')"
     if [[ -n "$worktree" ]]; then
       state="ok"
     else

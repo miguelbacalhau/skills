@@ -23,7 +23,9 @@
 #       Feature runs: .orca/*/spec.md at depth 1 (feat-briefs/ has none;
 #       debug runs keep theirs nested at fix/spec.md) with no sibling
 #       report.md. interrupted -> the workflow launched; followed by:
-#         RUNID:<TAB><id>                the LAST **Workflow run:** line
+#         RUNID:<TAB><id|absent>         the LAST **Workflow run:** line
+#                                        (absent when its value is empty —
+#                                        a hand-mangled record)
 #         ARGS:<TAB><json|absent>        from that run's own record only —
 #                                        the lines following the last run
 #                                        line; a record cut short (session
@@ -175,7 +177,7 @@ cmd_discover() {
     fi
     runid="$(record_value "$spec" "Workflow run" "$run_ln")"
     printf 'RUN:\t%s\tinterrupted\n' "$dir"
-    printf 'RUNID:\t%s\n' "$runid"
+    printf 'RUNID:\t%s\n' "${runid:-absent}"
     args="$(record_value "$spec" "Workflow args" "$run_ln")"
     printf 'ARGS:\t%s\n' "${args:-absent}"
     value="$(record_value "$spec" "Workflow reviewer" "$run_ln")"
@@ -227,7 +229,7 @@ cmd_discover() {
       continue
     fi
     printf 'CASE:\t%s\tinterrupted\n' "$(basename "$casedir")"
-    printf 'RUNID:\t%s\n' "$runid"
+    printf 'RUNID:\t%s\n' "${runid:-absent}"
     printf 'ARGS:\t%s\n' "${args:-absent}"
   done
 
@@ -247,14 +249,23 @@ g() { git --git-dir="$common_dir" "$@"; }
 # skips anything carrying either verb's marker so a bare suffix never
 # cross-joins another slug's run.
 run_join() { # <slug> <feat|bug>
-  local d match=""
+  local d name prefix match=""
+  # Anchored: the glob alone would let slug "alpha" claim slug "x-alpha"'s
+  # run dir (*-feat-alpha matches ...-feat-x-alpha). The prefix before
+  # -<verb>-<slug> must be the timestamp — digits and dashes only —
+  # checked literally, never through a regex the slug could corrupt.
   for d in "$repo_root/.orca/"*"-$2-$1"; do
-    [[ -d "$d" ]] && match="$d"
+    [[ -d "$d" ]] || continue
+    name="${d##*/}"
+    prefix="${name%-"$2"-"$1"}"
+    [[ "$prefix" != "$name" && "$prefix" =~ ^[0-9]+(-[0-9]+)*$ ]] && match="$d"
   done
   if [[ -z "$match" && "$2" == feat ]]; then
     for d in "$repo_root/.orca/"*"-$1"; do
-      [[ -d "$d" && "$(basename "$d")" != *"-feat-"* \
-        && "$(basename "$d")" != *"-bug-"* ]] && match="$d"
+      name="${d##*/}"
+      prefix="${name%-"$1"}"
+      [[ -d "$d" && "$prefix" != "$name" && "$prefix" =~ ^[0-9]+(-[0-9]+)*$ \
+        && "$name" != *"-feat-"* && "$name" != *"-bug-"* ]] && match="$d"
     done
   fi
   printf '%s' "${match:-orphan}"
@@ -262,13 +273,16 @@ run_join() { # <slug> <feat|bug>
 
 # merged|unmerged|unknown — an empty target means there is nothing to test
 # against (detached/unset trunk, or an item branch whose targets are gone).
+# merge-base failing (exit > 1: unrelated histories, a missing object) is
+# unknown too, never presented as an unmerged verdict.
 merged_state() { # <branch> <target>
   [[ -n "$2" ]] || { echo unknown; return; }
-  if g merge-base --is-ancestor "$1" "$2" 2>/dev/null; then
-    echo merged
-  else
-    echo unmerged
-  fi
+  g merge-base --is-ancestor "$1" "$2" 2>/dev/null
+  case "$?" in
+    0) echo merged ;;
+    1) echo unmerged ;;
+    *) echo unknown ;;
+  esac
 }
 
 cmd_status() {

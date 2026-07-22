@@ -169,6 +169,26 @@ EOF
   has_line $'BRANCH:\tfeature/alpha\tmerged\tahead:0\torphan'
 }
 
+@test "status: slug alpha never claims slug x-alpha's run dir" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  git branch feature/alpha
+  mkdir -p .orca/20250101-1200-feat-x-alpha
+  run triage status
+  [ "$status" -eq 0 ]
+  has_line $'BRANCH:\tfeature/alpha\tmerged\tahead:0\torphan'
+}
+
+@test "a run record with an empty runId reports absent" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  mkdir -p .orca/20250101-1200-feat-alpha
+  printf '# spec\n\n**Workflow run:**\n' >.orca/20250101-1200-feat-alpha/spec.md
+  run triage discover
+  [ "$status" -eq 0 ]
+  has_line $'RUNID:\tabsent'
+}
+
 @test "status reports unmerged branches with ahead counts" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
