@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  BATS_VERSION: 1.11.1
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck (macOS)
+        if: runner.os == 'macOS'
+        run: command -v shellcheck >/dev/null || brew install shellcheck
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh .github/scripts/*.sh
+
+      - name: Validate JSON manifests
+        run: |
+          for f in .claude-plugin/plugin.json .claude-plugin/marketplace.json .mcp.json; do
+            python3 -m json.tool "$f" >/dev/null || { echo "invalid JSON: $f"; exit 1; }
+          done
+
+      - name: Contract-vocabulary lockstep check
+        run: python3 .github/scripts/lockstep-check.py
+
+      - name: Install bats
+        run: |
+          curl -sL "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" | tar -xz
+          echo "$PWD/bats-core-${BATS_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: bats
+        run: bats tests/

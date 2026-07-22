@@ -50,7 +50,7 @@ fi
 major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
 
 breaking_re='^[a-z]+(\([^)]*\))?!: ' feat_re='^feat(\([^)]*\))?: ' footer_re='^BREAKING[- ]CHANGE: '
-bump=patch
+bump="patch"
 while IFS= read -r subject; do
   if [[ "$subject" =~ $breaking_re ]]; then bump=major; break; fi
   if [[ "$subject" =~ $feat_re ]]; then bump=minor; fi

@@ -301,7 +301,8 @@ cmd_open() {
     printf 'NOTES:\t%s\n' "$(notes_path_for_branch "$head_branch")"
   fi
 
-  local difftool_cmd="cd $(shq "$worktree") && git difftool -d $(shq "$trunk")...HEAD"
+  local difftool_cmd
+  difftool_cmd="cd $(shq "$worktree") && git difftool -d $(shq "$trunk")...HEAD"
 
   # --- editor: absent -> detect (nvim, then vscode), pinned -> loud fail, none -> opt out ---
   local editor probe_detail=""
@@ -337,7 +338,8 @@ cmd_open() {
     fi
   fi
 
-  local nvim_cmd="cd $(shq "$worktree") && nvim \"+OrcaReview\""
+  local nvim_cmd
+  nvim_cmd="cd $(shq "$worktree") && nvim \"+OrcaReview\""
 
   if [[ "$resolved" == "nvim" ]]; then
     # --- terminal: consulted only for nvim — the vscode launch is a detached GUI ---

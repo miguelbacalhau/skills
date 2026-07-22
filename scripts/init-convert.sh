@@ -80,6 +80,7 @@ fail() { # <reason> <detail> — typed failure, exit 1
 journal_path() { printf '%s/.orca/init-convert-journal' "$root"; }
 journal_append() { printf '%s\0%s\0' "$1" "$2" >>"$(journal_path)"; }
 
+# shellcheck disable=SC2317  # invoked indirectly via trap
 on_signal() { # <signal-name> — journal the interruption and die typed
   journal_append interrupted "$1"
   printf 'FAIL:\tINTERRUPTED\tconversion interrupted by SIG%s — run init-convert.sh recover from the repository root\n' "$1"
@@ -109,7 +110,7 @@ move_manifest_entries() { # uses $root $branch $manifest
       || fail CONVERT_FAILED "mkdir failed for $f — moves incomplete; run init-convert.sh recover"
     mv "$root/$f" "$dest" \
       || fail CONVERT_FAILED "move failed for $f — moves incomplete; run init-convert.sh recover"
-    journal_append done "$f"
+    journal_append 'done' "$f"
     moved_count=$((moved_count + 1))
   done <"$manifest"
 }
@@ -250,7 +251,8 @@ cmd_convert() {
   # steps had not happened yet, and .git must be gone before .bare can move
   # back. Runs before the untracked moves, so rm -rf of the fresh worktree
   # deletes only checked-out tracked files.
-  local revert="reversible: cd $(printf '%q' "$root") && rm -rf ./$(printf '%q' "$branch") && rm -f .git && mv .bare .git && git config core.bare false && git worktree prune"
+  local revert
+  revert="reversible: cd $(printf '%q' "$root") && rm -rf ./$(printf '%q' "$branch") && rm -f .git && mv .bare .git && git config core.bare false && git worktree prune"
   journal_append step mv-git-bare
   mv "$root/.git" "$root/.bare" \
     || { rm -f "$manifest" "$(journal_path)"; fail CONVERT_FAILED "mv .git .bare failed (nothing was changed)"; }
