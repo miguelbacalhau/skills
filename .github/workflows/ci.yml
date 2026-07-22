@@ -36,6 +36,9 @@ jobs:
       - name: Contract-vocabulary lockstep check
         run: python3 .github/scripts/lockstep-check.py
 
+      - name: Parse workflow scripts (host-style wrapping)
+        run: node .github/scripts/parse-workflow.js scripts/*.workflow.js
+
       - name: Install bats
         run: |
           curl -sL "https://github.com/bats-core/bats-core/archive/refs/tags/v${BATS_VERSION}.tar.gz" | tar -xz
