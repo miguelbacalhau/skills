@@ -307,7 +307,7 @@ if (needReproduce) {
     tuned('reproduce', { agentType: 'orca:reproduce', label: 'reproduce', phase: 'Repro', schema: REPRODUCE })),
     'reproduce')
   if (!rep.reproduced)
-    return finish({ status: 'no-repro', notes: rep.notes, hypothesesTested: 0, tokensSpent: budget.spent() }
+    return finish({ status: 'no-repro', notes: rep.notes, hypothesesTested: 0, tokensSpent: budget.spent() })
   // The gate is deterministic, never the agent's self-report: run the script.
   // Exit 0 and exit 125 both fail it — a tree that cannot be tested is not a
   // reproduction.
@@ -315,7 +315,7 @@ if (needReproduce) {
   if (check.exitCode === 0 || check.exitCode === 125)
     return finish({ status: 'no-repro',
       notes: `reproduce agent reported success but repro.sh exits ${check.exitCode}${check.exitCode === 125 ? ' (cannot test)' : ''} in ${baseWt}: ${rep.notes}`,
-      hypothesesTested: 0, tokensSpent: budget.spent() }
+      hypothesesTested: 0, tokensSpent: budget.spent() })
   log(`repro established (exit ${check.exitCode})`)
 }
 
@@ -370,7 +370,7 @@ const verifyOne = async (h, hypPath) => {
      `Case directory: ${caseDir}`,
      `Run directory: ${runDir}`,
      `Hypothesis: ${h.id} — ${h.statement}`,
-     `Hypotheses file: ${hypPath} — your hypothesis's full entry (causal story, killing evidence, falsification experiment) is there.`,
+     `Hypotheses file: ${hypPath} — your hypothesis's full entry (causal story, killing evidence, falsification experiment) is there${h.fileId && h.fileId !== h.id ? ` under the id "${h.fileId}"` : ''}.`,
      `Verdict artifact path: ${runDir}/verdicts/${h.id}.json`,
      `Repro command: ${reproCmd} — run from the worktree root; exit 0 = bug absent, 1-127 = bug present, 125 = cannot test (git-bisect-run compatible).`,
      `Status task: as your FIRST action, create one session task via TaskCreate with subject "${h.id} — ${short}", then set it in_progress via TaskUpdate with activeForm "verifying ${h.id}". Just before returning, TaskUpdate it to completed with subject "${h.id} — ${short} · <your verdict>". If a call fails or the tools are missing, skip it and proceed; never touch any other task.`]
@@ -422,8 +422,13 @@ for (let round = 1; round <= 2; round++) {
     returnedIds.every(id => expectedIds.includes(id))
   if (!idsUsable)
     log(`round ${round}: hypothesize returned unexpected ids (${returnedIds.join(', ')}) — falling back to positional H-numbering`)
+  // fileId keeps the agent's original spelling: the hypotheses FILE was
+  // written under it (e.g. "h3"), and the verify agent must find its entry
+  // there even when the run's canonical id normalized the case.
   const hyps = hyp.hypotheses.map((h, i) => ({
-    id: idsUsable ? returnedIds[i] : `H${offset + i + 1}`, statement: h.statement }))
+    id: idsUsable ? returnedIds[i] : `H${offset + i + 1}`,
+    fileId: String(h.id || '').trim() || `H${offset + i + 1}`,
+    statement: h.statement }))
   log(`round ${round}: ${hyps.length} hypotheses to verify`)
 
   // ---------- phase 3: verify (parallel, worktree-isolated) ----------
@@ -462,14 +467,17 @@ for (let round = 1; round <= 2; round++) {
     // Honest "nothing confirmed" — no retry: the inconclusives are in the
     // verdicts and land in the ledger. In round 2 a committed failed fix may
     // sit on the fix branch (reverted on its tip) — return the branch so the
-    // report and ledger keep the record.
-    return finish({ status: 'undiagnosed', ...(fixCommitted ? { fixBranch } : {}),
-      hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    // report and ledger keep the record, and keep round 1's diagnosis too:
+    // it was judged and attempted, and the report must not lose it just
+    // because round 2 confirmed nothing new.
+    return finish({ status: 'undiagnosed', ...(diagnosis ? { diagnosis } : {}),
+      ...(fixCommitted ? { fixBranch } : {}),
+      hypothesesTested: tested.length, tokensSpent: budget.spent() })
   }
   diagnosis = diag.rootCause
   log(`diagnosed: ${diagnosis.length > 120 ? `${diagnosis.slice(0, 117)}…` : diagnosis}`)
   if (scope === 'diagnose-only')
-    return finish({ status: 'diagnosed', diagnosis, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'diagnosed', diagnosis, hypothesesTested: tested.length, tokensSpent: budget.spent() })
 
   // ---------- phase 5: fix (nested work loop) ----------
   phase('Fix')
@@ -524,7 +532,7 @@ for (let round = 1; round <= 2; round++) {
     log(`fix attempt ${round} did not land: ${reason}`)
     if (round === 2)
       return finish({ status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
-        hypothesesTested: tested.length, tokensSpent: budget.spent() }
+        hypothesesTested: tested.length, tokensSpent: budget.spent() })
     lastFailedFix = { rootCause: diagnosis, reason, committed: false }
     continue
   }
@@ -556,7 +564,7 @@ for (let round = 1; round <= 2; round++) {
     } catch (err) {
       log(`context maintenance failed (non-fatal): ${String((err && err.message) || err)}`)
     }
-    return finish({ status: 'fixed', diagnosis, fixBranch, promotions, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'fixed', diagnosis, fixBranch, promotions, hypothesesTested: tested.length, tokensSpent: budget.spent() })
   }
   if (check.exitCode === 125) {
     // Cannot-test is not "still red": the committed fix is unverified, and a
@@ -565,11 +573,11 @@ for (let round = 1; round <= 2; round++) {
     log(`repro.sh exits 125 in ${fixWt} — the tree cannot be tested; the fix is unverified`)
     return finish({ status: 'not-fixed', diagnosis, fixBranch,
       notes: `the committed fix is unverified: repro.sh exits 125 (cannot test) in ${fixWt} — repair the tree (build, dependencies), then re-run the case`,
-      hypothesesTested: tested.length, tokensSpent: budget.spent() }
+      hypothesesTested: tested.length, tokensSpent: budget.spent() })
   }
   log(`fix attempt ${round}: repro.sh still exits ${check.exitCode} in ${fixWt}`)
   if (round === 2)
-    return finish({ status: 'not-fixed', diagnosis, fixBranch, hypothesesTested: tested.length, tokensSpent: budget.spent() }
+    return finish({ status: 'not-fixed', diagnosis, fixBranch, hypothesesTested: tested.length, tokensSpent: budget.spent() })
   // One internal retry: revert the failed attempt on the fix branch tip (a
   // single commit restoring the pre-attempt tree — the diff stays in history
   // as ledger evidence, but round 2 builds from a tree without the wrong fix
@@ -593,4 +601,4 @@ for (let round = 1; round <= 2; round++) {
 // Unreachable — both rounds return — but a linter-visible fallback beats an
 // undefined workflow result if the loop is ever edited.
 return finish({ status: 'not-fixed', diagnosis, ...(fixCommitted ? { fixBranch } : {}),
-  hypothesesTested: tested.length, tokensSpent: budget.spent() }
+  hypothesesTested: tested.length, tokensSpent: budget.spent() })
