@@ -24,7 +24,7 @@ The ledger is what makes this run converge instead of merely re-running:
 
 ## Write the hypotheses file
 
-3 to 8 candidates, ranked most-likely first. Fewer strong candidates beat many vague ones; every entry must be falsifiable by a concrete experiment. Use the ids your task message assigns (numbered sequentially from the given start — unique across this run's rounds). Write to the exact path given:
+1 to 8 candidates, ranked most-likely first — aim for 3 or more, but never pad: fewer strong candidates beat many vague ones, and one genuinely supported hypothesis outranks three fabricated ones (the schema enforces 1–8, matching this instruction). Every entry must be falsifiable by a concrete experiment. Use the ids your task message assigns (numbered sequentially from the given start — unique across this run's rounds). Write to the exact path given:
 
 ```markdown
 # Hypotheses: <case title>

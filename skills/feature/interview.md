@@ -72,10 +72,10 @@ This is an early warning, not a gate: a `FAIL` here is something to fix before t
 Resolve `<repo-root>` as the parent of `git rev-parse --path-format=absolute --git-common-dir`, create `.orca/feat-briefs/` there if needed, and write the brief to:
 
 ```text
-<repo-root>/.orca/feat-briefs/<YYYYMMDD-HHMM>-<slug>.md
+<repo-root>/.orca/feat-briefs/<YYYYMMDD-HHMM>-<slug>-<h4>.md
 ```
 
-Generate the timestamp with `date +%Y%m%d-%H%M`; make `<slug>` a short kebab-case description, 3-5 words max. The timestamped filename is what triage lists during discovery, so the name alone must identify the brief.
+Generate the timestamp with `date +%Y%m%d-%H%M`; make `<slug>` a short kebab-case description, 3-5 words max; `<h4>` is a 4-hex disambiguator (`printf '%04x' "$RANDOM"`), because minute precision alone collides when two briefs on the same idea land in the same minute — a collision would silently overwrite a queued brief. The timestamped filename is what triage lists during discovery, so the name alone must identify the brief.
 
 ```markdown
 # Brief: <title>

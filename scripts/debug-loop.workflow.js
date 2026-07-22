@@ -373,7 +373,9 @@ const verifyOne = async (h, hypPath) => {
      `Hypotheses file: ${hypPath} — your hypothesis's full entry (causal story, killing evidence, falsification experiment) is there${h.fileId && h.fileId !== h.id ? ` under the id "${h.fileId}"` : ''}.`,
      `Verdict artifact path: ${runDir}/verdicts/${h.id}.json`,
      `Repro command: ${reproCmd} — run from the worktree root; exit 0 = bug absent, 1-127 = bug present, 125 = cannot test (git-bisect-run compatible).`,
-     `Status task: as your FIRST action, create one session task via TaskCreate with subject "${h.id} — ${short}", then set it in_progress via TaskUpdate with activeForm "verifying ${h.id}". Just before returning, TaskUpdate it to completed with subject "${h.id} — ${short} · <your verdict>". If a call fails or the tools are missing, skip it and proceed; never touch any other task.`]
+     // JSON.stringify: a statement containing quotes must not garble the
+     // subject the agent is told to set verbatim.
+     `Status task: as your FIRST action, create one session task via TaskCreate with subject ${JSON.stringify(`${h.id} — ${short}`)}, then set it in_progress via TaskUpdate with activeForm "verifying ${h.id}". Just before returning, TaskUpdate it to completed with subject ${JSON.stringify(`${h.id} — ${short} · `)}<your verdict>. If a call fails or the tools are missing, skip it and proceed; never touch any other task.`]
       .join('\n'),
     tuned('verify', { agentType: 'orca:verify', label: `verify:${h.id}`, phase: 'Verify', schema: VERDICT }))
   if (v === null || v === undefined) return null
