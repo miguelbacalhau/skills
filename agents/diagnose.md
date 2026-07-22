@@ -94,6 +94,10 @@ prefer-smaller-scope
 ## Risks & Open Questions
 
 - <Anything the verdicts left uncertain that the implementer should watch for>
+
+## Decisions
+
+- <Leave this section empty at synthesis apart from this placeholder removed: the work loop's escalation agents append amendments here as tagged bullets ("- (<fix-item-id>) chose X over Y: <reason>"), and the plan agent reads them as binding. The heading must exist — both consumers assume it.>
 ```
 
 Exactly one work item, with the id your task message gives. The owned files are where the root cause lives plus where the regression test belongs — name them concretely.
