@@ -51,14 +51,29 @@ major="${BASH_REMATCH[1]}" minor="${BASH_REMATCH[2]}" patch="${BASH_REMATCH[3]}"
 
 breaking_re='^[a-z]+(\([^)]*\))?!: ' feat_re='^feat(\([^)]*\))?: ' footer_re='^BREAKING[- ]CHANGE: '
 bump="patch"
+# Size from SHIPPED-touching commits only: a feat that changes nothing
+# shipped must not size the bump a chore's shipped change triggers.
 while IFS= read -r subject; do
   if [[ "$subject" =~ $breaking_re ]]; then bump=major; break; fi
   if [[ "$subject" =~ $feat_re ]]; then bump=minor; fi
-done < <(git log --format=%s "$base..HEAD")
+done < <(git log --format=%s "$base..HEAD" -- "${SHIPPED[@]}")
 if [[ "$bump" != major ]]; then
+  # BREAKING CHANGE must be a footer token: only each body's final
+  # paragraph is scanned, so prose or a quoted mention mid-body never
+  # majors a release.
   while IFS= read -r line; do
     if [[ "$line" =~ $footer_re ]]; then bump=major; break; fi
-  done < <(git log --format=%b "$base..HEAD")
+  done < <(git log --format='%b%x00' "$base..HEAD" -- "${SHIPPED[@]}" | awk '
+    BEGIN { RS = "\0" }
+    {
+      n = split($0, L, "\n")
+      end = 0
+      for (i = n; i >= 1; i--) if (L[i] !~ /^[[:space:]]*$/) { end = i; break }
+      if (!end) next
+      begin = 1
+      for (i = end; i >= 1; i--) if (L[i] ~ /^[[:space:]]*$/) { begin = i + 1; break }
+      for (i = begin; i <= end; i++) print L[i]
+    }')
 fi
 
 case "$bump" in
