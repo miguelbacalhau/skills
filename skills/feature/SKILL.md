@@ -251,6 +251,15 @@ Write the run report to `<run-dir>/report.md` **first**, then relay its highligh
 **Integration worktree:** `<repo-root>/orca-<slug>` <the exact path the run used — the audit and retry skills read this field rather than reconstructing the naming convention>
 **Deliverable state:** <the returned `deliverableState`: verified | unverified | built — with `unverified`, one line naming why (verifier died, or fixes left uncommitted); the branch must never be described as verified or complete when the state says otherwise>
 
+## Summary
+
+<Two to four sentences for the reader who opens this file cold: what
+shipped (n of m items) and what the deliverable branch contains, the
+deliverable state in words, what awaits the user — blocked decisions,
+or just review-and-land — and the integration verdict. Restates the
+sections below; introduces no fact that appears nowhere else in the
+report.>
+
 ## Shipped
 
 | ID  | Item    | Commit | Status |
@@ -282,7 +291,7 @@ Write the run report to `<run-dir>/report.md` **first**, then relay its highligh
 The deliverable is the `feature/<slug>` branch, built in the integration worktree. Walk the diff in your own editor first with `/orca:review`, then land it from your own worktree with `git merge --no-ff feature/<slug>`, then optionally push. <When items are blocked: `/orca:retry` resolves the decisions recorded above with you and relaunches only the unmet items on the same branch.> <When Follow-ups list deferred work: `/orca:followup` turns the ones you select into the next run's brief.>
 ```
 
-After writing the file, give the user a short spoken summary — what shipped with commit hashes, anything `blocked` and the decision it waits on, the integration result feature by feature, any knowledge worth promoting (theirs to commit, not orca's), tokens spent, and the path to the full `report.md` — then the landing command. When the run left blocked items, mention that `/orca:retry` resolves their recorded decisions and finishes them inside this same run; when it left follow-ups, that `/orca:followup` turns the selected ones into the next run's brief. The report file is the authoritative version; the spoken summary just points at it.
+After writing the file, give the user a short spoken summary — what shipped with commit hashes, anything `blocked` and the decision it waits on, the integration result feature by feature, any knowledge worth promoting (theirs to commit, not orca's), tokens spent, and the path to the full `report.md` — then the landing command; the file's `## Summary` is the right skeleton for the spoken version — say it, then the details this paragraph lists. When the run left blocked items, mention that `/orca:retry` resolves their recorded decisions and finishes them inside this same run; when it left follow-ups, that `/orca:followup` turns the selected ones into the next run's brief. The report file is the authoritative version; the spoken summary just points at it.
 
 ## Guidelines
 
