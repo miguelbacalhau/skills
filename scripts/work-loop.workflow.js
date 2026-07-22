@@ -962,6 +962,13 @@ if (shipped.length) {
     let reviewedClean = false
     const fixNotes = { declines: [], escalations: [] }
     try {
+      // A reviewer switch on retry (codex run resumed as claude, or vice
+      // versa) can leave the other reviewer's integration artifact on disk
+      // while fix.md asserts exactly one exists — the fixer would read last
+      // round's stale findings beside the fresh ones. Clear both names
+      // before this run's reviewer writes its own.
+      await sh(`rm -f '${sq(runDir)}/reviews/integration-codex.json' '${sq(runDir)}/reviews/integration-claude.json'`,
+        'integration-review-clean', 'Review')
       const first = await review('integration', integrationWt, 0, 'integration')
       if (first.total === 0) reviewedClean = true
       else {
