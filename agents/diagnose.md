@@ -82,6 +82,10 @@ When the scope is `diagnose-and-fix` and you confirmed a root cause, also write 
 | --- | --------- | ---------- | ------------- |
 | <fix-item-id> | <one line: the fix and its regression test> | — | <the owned files> |
 
+Acceptance — one line per item, the observable check that the item is done:
+
+- **<fix-item-id>:** the repro command exits 0 from the integration worktree root, and the regression test fails before the fix and passes after.
+
 ## Assumptions
 
 - <What the diagnosis takes as established, with evidence pointers>

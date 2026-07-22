@@ -32,7 +32,10 @@ there and the current text is the contract.
 {{FOCUS}}
 
 Hunt for: bugs, broken edge cases, violations of the spec interfaces,
-regressions to surrounding code, missing or weak tests{{EXTRA_HUNTS}}.
+regressions to surrounding code, missing or weak tests, and the item's
+acceptance line — in the spec's Work Breakdown — unmet by the change
+under review (a spec without acceptance lines predates them: skip
+that hunt){{EXTRA_HUNTS}}.
 A removal the spec or plan calls for is not a regression — when they
 restructure existing behavior, hunt instead for remnants of the old
 implementation that should have been deleted: dead code paths, stale

@@ -79,6 +79,10 @@ restructuring anywhere in the breakdown.>
 | W1  | <coherent unit of work>      | —          | <paths or globs>     |
 | W2  | <coherent unit of work>      | W1         | <paths or globs>     |
 
+Acceptance — one line per item, the observable check that the item is done:
+
+- **W1:** <behavior, state, or command outcome checkable from the integration worktree>
+
 ## Assumptions
 
 - <Assumption made to proceed>
@@ -108,6 +112,7 @@ Rules for the breakdown:
 - Never use `integration` as an item ID — it is reserved for the run's end-of-run integration review, and the workflow refuses to launch a breakdown that uses it.
 - "Files it owns" is a soft signal, not a parallelism gate — worktrees isolate execution, so overlap surfaces as a merge conflict instead of corruption. Still prefer splits along real module boundaries: heavy expected overlap between independent items means the split is wrong. The column may list files an item deletes or renames; name a rename's destination so later items reference the new paths.
 - A restructure of existing code is its own work item, behavior-preserving, never folded into a feature item: its acceptance criterion is that existing tests still pass and the new seam exists. It sits upstream — items that need the new shape depend on it and code against the new seam only. When it replaces something with existing callers, use the strangler shape: one item introduces the new path beside the old, caller migrations follow (parallel where callers are independent), and a final item deletes the old path. Never delete the old implementation in the same item that introduces the new one — the integration branch must build green after every merge.
+- Every item gets exactly one acceptance line: observable and checkable from the integration worktree, technology-agnostic where the codebase allows, restating the item's scope rather than extending it — the doubt rule governs ambiguity here as everywhere. For a restructure item the line is its already-stated criterion — existing tests still pass and the new seam exists — now recorded in the artifact instead of implied.
 - A long dependency chain is the correct shape for a redesign, not a smell — the heavy-overlap warning above applies to items meant to be independent, not to a deliberate restructure-then-rebuild sequence. A strangler-shaped redesign legitimately sits at the top of the 2-8 range.
 - Define every shared contract in **Interfaces Between Work Items** before the split, so parallel agents cannot invent conflicting versions. If two items cannot agree on a boundary, merge them into one item.
 - Keep it to 2-8 items. More than that means the idea needs a smaller first milestone — say so in Risks rather than emitting a giant breakdown.
