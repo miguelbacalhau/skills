@@ -83,6 +83,33 @@ cfg() { bash "$SCRIPTS/config.sh" "$@"; }
   [ "$(cat .orca/config.json)" = '{"reviewer":"gemini"}' ]
 }
 
+@test "set over a hand-mangled shape fails typed, never a traceback" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  mkdir -p .orca
+  printf '{"agents":[]}\n' >.orca/config.json
+  run cfg set plan.model=sonnet
+  assert_fail_reason BAD_SHAPE
+  [[ "$output" != *Traceback* ]]
+  [ "$(cat .orca/config.json)" = '{"agents":[]}' ]
+  printf '{"agents":{"plan":3}}\n' >.orca/config.json
+  run cfg set plan.model=sonnet
+  assert_fail_reason BAD_SHAPE
+  [[ "$output" != *Traceback* ]]
+}
+
+@test "writes are atomic: temp file renamed in, none left behind" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  run cfg set reviewer=codex
+  [ "$status" -eq 0 ]
+  [ "$(cat .orca/config.json)" = '{"reviewer":"codex"}' ]
+  # no stray temp files from the write
+  [ -z "$(find .orca -name '.config.json.*' -print -quit)" ]
+  # the implementation must go through the temp-file + rename pattern
+  grep -q 'os.replace' "$SCRIPTS/config.sh"
+}
+
 @test "value 'default' clears, and an empty result deletes the file" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"

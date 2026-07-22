@@ -124,7 +124,7 @@ ensure_exclude() {
 # lives in python3 (present on every target platform; jq is not guaranteed).
 py() {
   python3 - "$@" <<'PY'
-import json, os, sys
+import json, os, sys, tempfile
 
 # One shared validation vocabulary kept in lockstep across three code
 # validators: this script, work-loop.workflow.js, and debug-loop.workflow.js.
@@ -252,8 +252,19 @@ def write_result(path, cfg):
             print(f'DELETED:\t{path}')
         return
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w') as f:
-        f.write(compact(can) + '\n')
+    # Atomic: temp file + rename, so a concurrent preflight/review grep can
+    # never observe a truncated file.
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.config.json.')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            f.write(compact(can) + '\n')
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        raise
     print(f'WROTE:\t{path}')
 
 # ('top', key) or ('stage', stage, field); records an error and returns None
@@ -277,6 +288,9 @@ def parse_field(tok, clearing=False):
     err('UNKNOWN_KEY', f'{tok} — settable fields are <stage>.model, <stage>.effort, reviewer, editor, terminal')
     return None
 
+# Shape guards mirror clear/reset's defensiveness: a hand-mangled file
+# ({"agents":[]}, {"agents":{"plan":3}}) yields a typed FAIL at the next
+# bail, never a Python traceback.
 def apply_ops(cfg, ops):
     for op in ops:
         if op[0] == 'set':
@@ -284,7 +298,15 @@ def apply_ops(cfg, ops):
             if spec[0] == 'top':
                 cfg[spec[1]] = value
             else:
-                cfg.setdefault('agents', {}).setdefault(spec[1], {})[spec[2]] = value
+                ag = cfg.setdefault('agents', {})
+                if not isinstance(ag, dict):
+                    err('BAD_SHAPE', f'agents must be an object keyed by stage, got {json.dumps(ag)} — fix by hand or config.sh reset')
+                    return
+                sc = ag.setdefault(spec[1], {})
+                if not isinstance(sc, dict):
+                    err('BAD_SHAPE', f'agents.{spec[1]} must be an object with model/effort, got {json.dumps(sc)} — config.sh reset {spec[1]} clears it')
+                    return
+                sc[spec[2]] = value
         else:  # clear
             _, spec = op
             if spec[0] == 'top':
