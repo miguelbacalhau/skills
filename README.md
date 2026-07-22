@@ -242,7 +242,7 @@ Optional per-repository overrides, written to `.orca/config.json` and applied by
 
 `reviewer` is `codex` or `claude`; when the key is **absent**, each run launch detects — codex binary on PATH at the minimum version → codex, else claude — and a written key pins the choice (pinning `codex` turns a future broken codex into a loud pre-flight `FAIL` instead of a silent claude run). On `reviewer=claude` the skill states the independence trade-off; on `reviewer=codex` it checks that the codex machine gates pass and points at `/orca:doctor` if they don't.
 
-Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `low` | `medium` | `high` | `xhigh` | `max`. Two caveats: `spec` accepts a model override only (it is spawned conversationally, where effort cannot be set), and what configuring `review` means depends on the reviewer — with codex it changes the cost of the *courier* that drives Codex, never Codex's review quality; with claude it tunes the actual reviewer (default opus/high). Overrides survive plugin updates; the plugin's own agent definitions are never edited.
+Valid stage values — models `haiku` | `sonnet` | `opus` | `fable`, efforts `low` | `medium` | `high` | `xhigh` | `max`. One caveat: what configuring `review` means depends on the reviewer — with codex it changes the cost of the *courier* that drives Codex, never Codex's review quality; with claude it tunes the actual reviewer (default opus/high). Overrides survive plugin updates; the plugin's own agent definitions are never edited.
 
 ## Anatomy of a run
 

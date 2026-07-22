@@ -184,16 +184,16 @@ const updateContext = parsedArgs.updateContext !== false
 // treat a missing file as skippable, so this line is safe unconditionally.
 const contextLine = `Project context: ${repoRoot}/.orca/map.md (codebase map) and ${repoRoot}/.orca/decisions.md (decision log) — hints from a snapshot at the commit stamped in each header, not ground truth: read them first for where to look, verify anything you rely on; file paths rot slower than implementation details. A missing file is skipped, not an error.`
 
-// Per-stage model/effort overrides (args.agents). Only the seven
-// workflow-spawned stages are tunable — spec is spawned conversationally
-// before launch — and the internal helpers (the sh relay, reconcile,
-// escalate) keep their fixed models: their cost/judgment profile is part of
-// the loop's design, not a per-repo preference. Validated at launch like the
-// rest of args: a typo'd stage or model must fail here, not surface mid-run
-// as a dead agent call.
+// Per-stage model/effort overrides (args.agents). Only the seven stages this
+// workflow spawns are tunable here — spec is spawned by spec.workflow.js
+// before this workflow launches — and the internal helpers (the sh relay,
+// reconcile, escalate) keep their fixed models: their cost/judgment profile
+// is part of the loop's design, not a per-repo preference. Validated at
+// launch like the rest of args: a typo'd stage or model must fail here, not
+// surface mid-run as a dead agent call.
 const TUNABLE = ['plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integrate']
 // 'spec' is a valid config key — the run skill passes the config block
-// verbatim — but it is applied conversationally at spec-spawn time, before
+// verbatim — but it is applied by spec.workflow.js at spec-spawn time, before
 // this workflow exists; here it is validated and otherwise ignored. The debug
 // verb's stages get the same treatment: the config file has ONE agents block
 // shared by both verbs (orca:debug passes it verbatim into its nested call to
@@ -229,8 +229,6 @@ for (const [stage, cfg] of Object.entries(agentCfg)) {
     throw new Error(`args.agents.${stage}.model must be one of ${MODELS.join(', ')} (got ${JSON.stringify(cfg.model)})`)
   if (cfg.effort !== undefined && !EFFORTS.includes(cfg.effort))
     throw new Error(`args.agents.${stage}.effort must be one of ${EFFORTS.join(', ')} (got ${JSON.stringify(cfg.effort)})`)
-  if (stage === 'spec' && cfg.effort !== undefined)
-    throw new Error('args.agents.spec.effort is not supported — the spec agent is spawned conversationally, where only model can be overridden')
 }
 // Merge overrides into agent() opts only when set: a run with no config keeps
 // its opts byte-identical to pre-config journals, so resumes still replay.

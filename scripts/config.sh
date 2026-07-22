@@ -52,7 +52,7 @@
 #     FAIL:<TAB><reason><TAB><detail>    exit 1, nothing written
 #       reasons: NOT_GIT OLD_GIT NO_PYTHON3 BAD_ARGS PARSE_ERROR DUPLICATE_KEY
 #                BAD_SHAPE UNKNOWN_KEY UNKNOWN_STAGE UNKNOWN_MODEL
-#                UNKNOWN_EFFORT SPEC_EFFORT UNKNOWN_REVIEWER UNKNOWN_EDITOR
+#                UNKNOWN_EFFORT UNKNOWN_REVIEWER UNKNOWN_EDITOR
 #                UNKNOWN_TERMINAL
 #
 # Canonical write shape — the contract the grep-readers in preflight.sh and
@@ -147,8 +147,6 @@ TOP_VALUES = {'reviewer': ['codex', 'claude'],
               'editor': ['nvim', 'vscode', 'none'],
               'terminal': ['tmux', 'none']}
 TOP_FAIL = {'reviewer': 'UNKNOWN_REVIEWER', 'editor': 'UNKNOWN_EDITOR', 'terminal': 'UNKNOWN_TERMINAL'}
-SPEC_EFFORT_MSG = ('spec.effort is not supported — the spec agent is spawned conversationally, '
-                   'where only model can be overridden')
 
 errors = []
 def err(reason, detail):
@@ -203,9 +201,7 @@ def validate_cfg(cfg):
                         if val not in MODELS:
                             err('UNKNOWN_MODEL', f'agents.{stage}.model={json.dumps(val)} — models are {", ".join(MODELS)}')
                     elif f == 'effort':
-                        if stage == 'spec':
-                            err('SPEC_EFFORT', SPEC_EFFORT_MSG)
-                        elif val not in EFFORTS:
+                        if val not in EFFORTS:
                             err('UNKNOWN_EFFORT', f'agents.{stage}.effort={json.dumps(val)} — efforts are {", ".join(EFFORTS)}')
                     else:
                         err('UNKNOWN_KEY', f'agents.{stage}.{f} — a stage takes only model and effort')
@@ -276,9 +272,8 @@ def write_result(path, cfg):
     print(f'WROTE:\t{path}')
 
 # ('top', key) or ('stage', stage, field); records an error and returns None
-# on anything else. Clearing spec.effort is allowed — removal is the remedy
-# for a file that wrongly holds it.
-def parse_field(tok, clearing=False):
+# on anything else.
+def parse_field(tok):
     if '.' in tok:
         stage, _, field = tok.partition('.')
         if stage not in STAGES:
@@ -286,9 +281,6 @@ def parse_field(tok, clearing=False):
             return None
         if field not in ('model', 'effort'):
             err('UNKNOWN_KEY', f'{tok} — a stage takes model or effort')
-            return None
-        if stage == 'spec' and field == 'effort' and not clearing:
-            err('SPEC_EFFORT', SPEC_EFFORT_MSG)
             return None
         return ('stage', stage, field)
     if tok in TOP_VALUES:
@@ -356,7 +348,7 @@ elif mode == 'set':
             err('BAD_ARGS', f'{tok} — set takes <field>=<value> assignments')
             continue
         field, _, value = tok.partition('=')
-        spec = parse_field(field, clearing=(value == 'default'))
+        spec = parse_field(field)
         if spec is None:
             continue
         if value == 'default':
@@ -390,7 +382,7 @@ elif mode == 'clear':
         if '=' in tok:
             err('BAD_ARGS', f'{tok} — clear takes bare fields, no "="')
             continue
-        spec = parse_field(tok, clearing=True)
+        spec = parse_field(tok)
         if spec is not None:
             ops.append(('clear', spec))
     bail_if_errors()

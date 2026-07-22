@@ -125,7 +125,9 @@ if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.s
 // carries its own literal copies for the spec spawn's model/effort
 // validation. This script applies
 // only the debug stages; the rest are validated here and applied by the
-// nested work loop, which receives the block verbatim.
+// nested work loop, which receives the block verbatim — except agents.spec,
+// which the nested loop also only validates: debug runs never spawn a spec
+// agent (the diagnose agent writes the fix contract).
 const DEBUG_TUNABLE = ['reproduce', 'hypothesize', 'verify', 'diagnose']
 const STAGES = ['spec', 'plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integrate', ...DEBUG_TUNABLE]
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable']
@@ -148,8 +150,6 @@ for (const [stage, cfg] of Object.entries(agentCfg)) {
     throw new Error(`args.agents.${stage}.model must be one of ${MODELS.join(', ')} (got ${JSON.stringify(cfg.model)})`)
   if (cfg.effort !== undefined && !EFFORTS.includes(cfg.effort))
     throw new Error(`args.agents.${stage}.effort must be one of ${EFFORTS.join(', ')} (got ${JSON.stringify(cfg.effort)})`)
-  if (stage === 'spec' && cfg.effort !== undefined)
-    throw new Error('args.agents.spec.effort is not supported — the spec agent is spawned conversationally, where only model can be overridden')
 }
 const tuned = (stage, opts) => {
   const cfg = agentCfg[stage]

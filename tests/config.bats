@@ -45,9 +45,23 @@ cfg() { bash "$SCRIPTS/config.sh" "$@"; }
   run cfg set bogus.model=opus
   assert_fail_reason UNKNOWN_STAGE
   [ ! -e .orca/config.json ]
-  run cfg set spec.effort=high
-  assert_fail_reason SPEC_EFFORT
+  run cfg set spec.effort=turbo
+  assert_fail_reason UNKNOWN_EFFORT
   [ ! -e .orca/config.json ]
+}
+
+@test "spec.effort is an ordinary override: set, shown, cleared" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  run cfg set spec.effort=high
+  [ "$status" -eq 0 ]
+  has_line $'OVERRIDE:\tspec\teffort\thigh'
+  run cfg show
+  [ "$status" -eq 0 ]
+  has_line $'OVERRIDE:\tspec\teffort\thigh'
+  run cfg set spec.effort=default
+  [ "$status" -eq 0 ]
+  refute_line $'OVERRIDE:\tspec'
 }
 
 @test "malformed JSON fails typed on show, validate, and set" {
