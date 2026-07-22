@@ -236,6 +236,15 @@ const REVIEW = { type: 'object', additionalProperties: false, required: ['writte
     total: { type: 'integer', minimum: 0 },
     criticalHigh: { type: 'integer', minimum: 0 },
     reason: { type: 'string' } } }
+// The integration-fixes pass has no plan file to carry Deviations, so the
+// fixer's declines and escalations come back structured and are persisted —
+// the item pass keeps its free-text return (the plan file is the record).
+const INTEGRATION_FIX = { type: 'object', additionalProperties: false,
+  required: ['declines', 'escalations', 'summary'],
+  properties: {
+    declines: { type: 'array', items: { type: 'string' } },
+    escalations: { type: 'array', items: { type: 'string' } },
+    summary: { type: 'string' } } }
 const CONTEXT = { type: 'object', additionalProperties: false,
   required: ['updated', 'promotions', 'summary'],
   properties: { updated: { type: 'boolean' },
@@ -951,17 +960,20 @@ if (shipped.length) {
     // independent reviewer ever saw. Uncommitted fixes stay in the
     // integration worktree; the gap names the state for audit/retry.
     let reviewedClean = false
+    const fixNotes = { declines: [], escalations: [] }
     try {
       const first = await review('integration', integrationWt, 0, 'integration')
       if (first.total === 0) reviewedClean = true
       else {
         for (let round = 1; ; round++) {
-          must(await agent(
+          const fixed = must(await agent(
             [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,
              `Item: integration — fixes applied during integration verification`,
              `There is no plan file for this item; the spec is the reference.`].join('\n'),
-            tuned('fix', { agentType: 'orca:fix', label: `fix:integration#${round}`, phase: 'Review' })),
+            tuned('fix', { agentType: 'orca:fix', label: `fix:integration#${round}`, phase: 'Review', schema: INTEGRATION_FIX })),
             `fix:integration#${round}`)
+          fixNotes.declines.push(...fixed.declines)
+          fixNotes.escalations.push(...fixed.escalations)
           const verdict = await review('integration', integrationWt, round, 'integration')
           if (verdict.criticalOrHigh === 0) { reviewedClean = true; break }
           if (round === 2) {
@@ -975,6 +987,17 @@ if (shipped.length) {
       const reason = String((err && err.message) || err)
       log(`integration review did not complete — fixes left uncommitted, branch unverified (${reason})`)
       integration.gaps.push(`integration fixes were NOT committed: their independent review did not complete (${reason}) — they remain uncommitted in the integration worktree`)
+    }
+    // Persist the fixer's declines/escalations: with no plan file to carry
+    // Deviations, an unpersisted return would be the only record — lost.
+    integration.fixNotes = fixNotes
+    if (fixNotes.declines.length || fixNotes.escalations.length) {
+      try {
+        await sh(`printf '%s\\n' '${sq(JSON.stringify(fixNotes, null, 2))}' > '${sq(runDir)}/integration-fixes.json'`,
+          'integration-fix-notes', 'Integrate')
+      } catch (err) {
+        log(`integration fix notes not persisted (non-fatal): ${String((err && err.message) || err)} — they remain in the workflow result`)
+      }
     }
     if (reviewedClean) {
       try {
