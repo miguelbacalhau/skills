@@ -50,7 +50,7 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1, nothing written
-#       reasons: NOT_GIT NO_PYTHON3 BAD_ARGS PARSE_ERROR DUPLICATE_KEY
+#       reasons: NOT_GIT OLD_GIT NO_PYTHON3 BAD_ARGS PARSE_ERROR DUPLICATE_KEY
 #                BAD_SHAPE UNKNOWN_KEY UNKNOWN_STAGE UNKNOWN_MODEL
 #                UNKNOWN_EFFORT SPEC_EFFORT UNKNOWN_REVIEWER UNKNOWN_EDITOR
 #                UNKNOWN_TERMINAL
@@ -88,6 +88,12 @@ command -v python3 >/dev/null 2>&1 \
 # the config is legitimate in a repo orca:init has not converted yet.
 resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  # An empty result can mean old git, not no-git: --path-format needs
+  # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
+  # wrong problem.
+  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fi
   if [[ -z "$common_dir" ]]; then
     fail NOT_GIT "not inside a git repository — the config is per-repository"
   fi

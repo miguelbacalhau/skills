@@ -74,7 +74,7 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>               exit 1, nothing launched
-#       reasons: NOT_GIT NOT_BARE NO_TRUNK BAD_ARGS NO_SUCH_WORKTREE
+#       reasons: NOT_GIT OLD_GIT NOT_BARE NO_TRUNK BAD_ARGS NO_SUCH_WORKTREE
 #                NO_BRANCH UNKNOWN_VALUE PINNED_PROBE_FAILED
 #                PINNED_TERMINAL_UNSET
 #
@@ -126,6 +126,12 @@ urlencode() {
 # Resolve common_dir / repo_root / trunk; typed FAIL outside the bare layout.
 resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  # An empty result can mean old git, not no-git: --path-format needs
+  # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
+  # wrong problem.
+  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fi
   if [[ -z "$common_dir" ]]; then
     fail NOT_GIT "not inside a git repository — nothing to review (orca:init sets up the layout)"
   fi

@@ -58,7 +58,7 @@
 #       launched, or the last run completed and left the case open.
 #
 #   Exit 0 always — empty output means nothing is waiting. The only typed
-#   failure: FAIL:<TAB>NOT_GIT<TAB><detail>, exit 1.
+#   failures: FAIL:<TAB>NOT_GIT<TAB><detail> and FAIL:<TAB>OLD_GIT<TAB><detail> (git < 2.31), exit 1.
 #
 # status output contract — TAB-separated, one line per git fact. Only the
 # runs' own footprint is emitted — the feature/* branch namespace and
@@ -89,7 +89,7 @@
 #       orca-fix-<slug> join their debug run dir (*-bug-<slug>).
 #
 #   Read-only, exit 0 always — empty output (beyond TRUNK:) means git holds
-#   no orca footprint. Shares discover's only typed failure, FAIL: NOT_GIT.
+#   no orca footprint. Shares discover's typed failures, FAIL: NOT_GIT / OLD_GIT.
 #
 # The ARGS payloads are the point: a resume must replay the launch args
 # byte-identical (any drift changes agent prompts and re-runs completed
@@ -105,6 +105,12 @@ fail() { # <reason> <detail> — typed failure, exit 1
 
 resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  # An empty result can mean old git, not no-git: --path-format needs
+  # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
+  # wrong problem.
+  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fi
   if [[ -z "$common_dir" ]]; then
     fail NOT_GIT "not inside a git repository — nothing to triage"
   fi

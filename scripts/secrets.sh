@@ -41,7 +41,7 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1
-#       reasons: BAD_ARGS NOT_GIT OUTSIDE_ROOT NO_PYTHON3
+#       reasons: BAD_ARGS NOT_GIT OLD_GIT OUTSIDE_ROOT NO_PYTHON3
 #
 # Ownership is by RESOLVED target, never substring: a symlink is ours to
 # manage (repair, replace, or sweep) only when resolving it lands on this
@@ -77,6 +77,12 @@ worktree="$(git -C "$2" rev-parse --show-toplevel 2>/dev/null || true)"
 # The repo root — the directory that holds .orca/ — is the parent of the
 # git common dir in both layouts (bare-with-worktrees and conventional).
 common_dir="$(git -C "$worktree" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+# An empty result can mean old git, not no-git: --path-format needs
+# git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
+# wrong problem.
+if [[ -z "$common_dir" ]] && git -C "$worktree" rev-parse --git-dir >/dev/null 2>&1; then
+  fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+fi
 [[ -n "$common_dir" ]] || fail NOT_GIT "$worktree is not inside a git repository"
 repo_root="$(dirname "$common_dir")"
 secrets_dir="$repo_root/.orca/secrets"

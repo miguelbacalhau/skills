@@ -65,7 +65,7 @@
 #       reasons: NOT_GIT ALREADY_CONVERTED LINKED_WORKTREE NOT_CONVENTIONAL
 #                DETACHED_HEAD BRANCH_UNSAFE PRECONDITION CONVERT_FAILED
 #                NOT_CONVERTED NO_WORKTREE NO_MANIFEST MANIFEST_MISMATCH
-#                INTERRUPTED NO_JOURNAL BAD_ARGS
+#                INTERRUPTED NO_JOURNAL OLD_GIT BAD_ARGS
 
 set -uo pipefail
 
@@ -136,6 +136,12 @@ verify_conversion() {
 # and default branch, refusing every layout the recipe does not cover.
 resolve_checkout() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  # An empty result can mean old git, not no-git: --path-format needs
+  # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
+  # wrong problem.
+  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fi
   if [[ -z "$common_dir" ]]; then
     fail NOT_GIT "not inside a git repository"
   fi
@@ -338,6 +344,10 @@ cmd_recover() {
 
 cmd_cleanup() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  # Same old-git distinction as resolve_checkout.
+  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fi
   if [[ -z "$common_dir" ]]; then
     fail NOT_GIT "not inside a git repository"
   fi

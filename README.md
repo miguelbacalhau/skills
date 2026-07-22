@@ -60,7 +60,8 @@ State lives in files, never in conversation memory: the brief, the spec with its
 | Claude Code | A harness with the **Workflow tool** (the work loop runs through it). `/orca:feature` checks and refuses without it. |
 | Codex CLI | Required only **when the reviewer is codex** (the default wherever it is installed): the **global `codex` binary on PATH**, version **≥ 0.142.5**, authenticated via `codex login`. **Never install codex via npm** — use `brew install codex` or the official release binaries. With `reviewer=claude`, the codex rows don't apply. |
 | Repository layout | Bare-repo-with-worktrees (`.bare/` + peer worktrees). `/orca:init` sets this up, including converting an existing conventional checkout in place. |
-| git | ≥ 2.5 (worktrees); ≥ 2.42 for `worktree add --orphan` when `/orca:init` creates a brand-new repository. |
+| git | ≥ 2.31 (`rev-parse --path-format` — every orca script's repository resolution; older gits get a typed `OLD_GIT` failure naming the upgrade, never a misdiagnosis); ≥ 2.42 for `worktree add --orphan` when `/orca:init` creates a brand-new repository. |
+| python3 | On PATH — `config.sh`'s strict JSON handling and `secrets.sh`'s symlink-ownership resolution both use it; both fail typed (`NO_PYTHON3`) without it. |
 | `MCP_TOOL_TIMEOUT` | Codex-only, like the row above: set to `1200000` (~20 min) in a Claude Code settings `env` block, so Codex reviews are not killed at the default MCP tool timeout. A plugin cannot ship session env, so `/orca:doctor` writes it for you. |
 | Permission mode | Runs need `bypassPermissions` for the session — see [Permissions and autonomy](#permissions-and-autonomy). |
 

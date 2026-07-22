@@ -32,7 +32,11 @@ fail=0
 
 # --- BARE_REPO: the run requires a bare repo with worktrees, no main checkout ---
 common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-if [[ -z "$common_dir" ]]; then
+if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
+  # Old git, not no-git: --path-format needs git >= 2.31.
+  echo "BARE_REPO: FAIL: git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+  fail=1
+elif [[ -z "$common_dir" ]]; then
   echo "BARE_REPO: FAIL: not inside a git repository"
   fail=1
 else
