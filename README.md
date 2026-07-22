@@ -369,7 +369,9 @@ Populating the tree is yours to do, by hand — one `mv` per secret: on a fresh 
 bash <plugin-root>/scripts/secrets.sh place <repo-root>/main
 ```
 
-Two carve-outs to the usual `.orca/` story. Unlike `map.md` and `decisions.md`, **`secrets/` is not a rebuildable cache — deleting it is data loss**; it is exactly the thing to leave out of any `.orca/` cleanup. And placed secrets are readable by every stage agent working in a worktree — with the codex reviewer that can mean transit to a different model provider if a value ever drags into a diff or log — so keep **development** credentials here, never production ones.
+Two carve-outs to the usual `.orca/` story. Unlike `map.md` and `decisions.md`, **`secrets/` is not a rebuildable cache — deleting it is data loss**; it is exactly the thing to leave out of any `.orca/` cleanup. And placed secrets are readable by the stage agents whose work needs them — so keep **development** credentials here, never production ones.
+
+Placement is least-privilege by stage: links go in where the work actually needs credentials (implement, fix, integrate, reproduce — builds, tests, repro scripts) and are stripped (`secrets.sh remove`, the resolved-target ownership test) before every independent review, the stage that consumes the run's most adversarial content and needs none. With the codex reviewer that separation also keeps secret values away from a different model provider. The recommendation compounds: keep the tree down to what runs actually need — every extra credential in `.orca/secrets/` widens the blast radius of any one compromised stage.
 
 ## Project context
 

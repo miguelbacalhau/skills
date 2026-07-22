@@ -181,6 +181,34 @@ make_secrets_layout() { # <dir>
   git check-ignore -q .orca/secrets/x
 }
 
+@test "remove strips only our placement links" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  echo 'SECRET=1' >"$BATS_TEST_TMPDIR/r/.orca/secrets/.env"
+  bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main" >/dev/null
+  ln -s /somewhere-else "$BATS_TEST_TMPDIR/r/main/foreign-link"
+  run bash "$SCRIPTS/secrets.sh" remove "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  has_line $'UNPLACED:\t.env'
+  has_line $'UNPLACED_TOTAL:\t1'
+  [ ! -L "$BATS_TEST_TMPDIR/r/main/.env" ]
+  [ -L "$BATS_TEST_TMPDIR/r/main/foreign-link" ]
+  # the canonical secret survives; a later place restores the link
+  [ -f "$BATS_TEST_TMPDIR/r/.orca/secrets/.env" ]
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main"
+  has_line $'LINKED:\t.env'
+}
+
+@test "remove sweeps our dangling links too" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  echo 'SECRET=1' >"$BATS_TEST_TMPDIR/r/.orca/secrets/.env"
+  bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main" >/dev/null
+  rm "$BATS_TEST_TMPDIR/r/.orca/secrets/.env"
+  run bash "$SCRIPTS/secrets.sh" remove "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  has_line $'UNPLACED:\t.env'
+  [ ! -L "$BATS_TEST_TMPDIR/r/main/.env" ]
+}
+
 @test "misuse fails typed: bad args and non-worktree" {
   run bash "$SCRIPTS/secrets.sh" place
   assert_fail_reason BAD_ARGS

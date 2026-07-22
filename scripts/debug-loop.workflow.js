@@ -332,6 +332,9 @@ const verifyOne = async (h, hypPath) => {
   // repo root is only a git context via its .git pointer file.
   // Every arrival gets secrets placement (idempotent), so the repro script
   // finds its `.env`s in the throwaway worktree at every commit it visits.
+  // Least-privilege note: unlike the work loop's review stage, every stage
+  // that runs in a hypothesis worktree (reproduce, verify) executes
+  // repro.sh, which needs the credentials — so placement stays.
   const placeCmd = pluginRoot ? ` && bash "${pluginRoot}/scripts/secrets.sh" place "${wt}"` : ''
   const wtCmd =
     `if [ -d "${wt}" ]; then echo WORKTREE_REUSED; ` +

@@ -15,6 +15,15 @@
 #
 # Usage:
 #   secrets.sh place <worktree>
+#   secrets.sh remove <worktree>
+#
+# remove is place's inverse, for least-privilege staging: the loops strip
+# placement links from a worktree before stages that consume adversarial
+# content and need no credentials (the independent review), and re-place
+# them for stages that do (implement, fix, integrate, reproduce). Only
+# links passing the resolved-target ownership test are touched. Emits one
+# UNPLACED:<TAB><relpath> per removed link and a final
+# UNPLACED_TOTAL:<TAB><n>; exits 0 even when nothing was removed.
 #
 # Output contract — one typed TAB-separated line per fact:
 #
@@ -54,8 +63,9 @@ fail() { # <reason> <detail> — typed failure, exit 1
   exit 1
 }
 
-[[ "${1:-}" == "place" && $# -eq 2 ]] \
-  || fail BAD_ARGS "usage: secrets.sh place <worktree>"
+mode="${1:-}"
+[[ ( "$mode" == "place" || "$mode" == "remove" ) && $# -eq 2 ]] \
+  || fail BAD_ARGS "usage: secrets.sh place|remove <worktree>"
 [[ -d "$2" ]] || fail BAD_ARGS "not a directory: $2"
 
 # Normalize to the worktree's top level (a subdirectory argument would
@@ -127,6 +137,37 @@ depth_of() {
   echo $(( ${#slashes} + 1 ))
 }
 wt_depth="$(depth_of "$wt_rel")"
+
+# ---- remove: strip our placement links (ownership by resolved target) ----
+if [[ "$mode" == "remove" ]]; then
+  removed=0
+  if [[ -d "$secrets_dir" ]]; then
+    while IFS= read -r -d '' src; do
+      rel="${src#"$secrets_dir"/}"
+      dest="$worktree/$rel"
+      [[ -L "$dest" ]] || continue
+      resolved="$(resolve_link "$dest" 2>/dev/null || true)"
+      [[ "$resolved" == "$secrets_canon/$rel" ]] || continue
+      rm -f "$dest" 2>/dev/null || continue
+      printf 'UNPLACED:\t%s\n' "$rel"
+      removed=$((removed + 1))
+    done < <(find "$secrets_dir" -mindepth 1 ! -type d -print0 | LC_ALL=C sort -z)
+  fi
+  # Owned links whose source was deleted since placement dangle and would
+  # escape the walk above — the sweep's ownership test catches them.
+  wt_glob="$(escape_glob "$worktree")"
+  while IFS= read -r -d '' lnk; do
+    [[ -e "$lnk" ]] && continue
+    rel="${lnk#"$worktree"/}"
+    resolved="$(resolve_link "$lnk" 2>/dev/null || true)"
+    [[ "$resolved" == "$secrets_canon/$rel" ]] || continue
+    rm -f "$lnk" 2>/dev/null || continue
+    printf 'UNPLACED:\t%s\n' "$rel"
+    removed=$((removed + 1))
+  done < <(find "$worktree" \( -name .git -o -path "$wt_glob/.orca" \) -prune -o -type l -print0 2>/dev/null | LC_ALL=C sort -z)
+  printf 'UNPLACED_TOTAL:\t%d\n' "$removed"
+  exit 0
+fi
 
 placed=0 skipped=0
 

@@ -410,7 +410,21 @@ const block = (id, reason) => {
 // agent's internal retries keeps overall resilience at the old SDK runner's
 // level.
 const reviewAgentType = reviewer === 'codex' ? 'orca:review-codex' : 'orca:review-claude'
+
+// Least-privilege secrets staging: reviewers consume the run's most
+// adversarial content (diffs, findings) and need no credentials, so their
+// worktree is stripped of placement links before every review; the stages
+// that do need them (implement at worktree add, fix, integrate via the
+// skill's placement) re-place. Best-effort both ways — a failed
+// place/remove degrades privilege separation, never the run.
+const secretsStage = async (verb, wt, label) => {
+  if (!pluginRoot) return
+  try { await sh(`bash "${pluginRoot}/scripts/secrets.sh" ${verb} "${wt}"`, label, 'Review') }
+  catch (err) { log(`secrets ${verb} failed (non-fatal) for ${wt}: ${String((err && err.message) || err)}`) }
+}
+
 const review = async (id, worktree, round, mode, ownedFiles = []) => {
+  await secretsStage('remove', worktree, `secrets-remove:${id}#${round}`)
   const artifact = `${runDir}/reviews/${id}-${reviewer}.json`
   const archive = `${runDir}/reviews/${id}-${reviewer}.round${round}.json`
   // The integration pseudo-item has no entry in `items`, so the find misses
@@ -638,6 +652,8 @@ const buildItem = async item => {
   const first = await review(item.id, wt, 0, 'item', item.files)
   if (first.total > 0 || first.criticalOrHigh > 0) {
     for (let round = 1; ; round++) {
+      // The fixer runs tests — it needs the credentials the review stripped.
+      await secretsStage('place', wt, `secrets-place:${item.id}#${round}`)
       must(await agent(
         [`Worktree: ${wt}`, `Run directory: ${runDir}`, `Item: ${item.id} — ${item.title}`,
          statusLine(item, `fixing #${round}`)].filter(Boolean).join('\n'),
@@ -1112,6 +1128,7 @@ if (shipped.length) {
       if (first.total === 0 && first.criticalOrHigh === 0) reviewedClean = true
       else {
         for (let round = 1; ; round++) {
+          await secretsStage('place', integrationWt, `secrets-place:integration#${round}`)
           const fixed = must(await agent(
             [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,
              `Item: integration — fixes applied during integration verification`,
@@ -1136,6 +1153,10 @@ if (shipped.length) {
       integration.gaps.push(`integration fixes were NOT committed: their independent review did not complete (${reason}) — they remain uncommitted in the integration worktree`)
       deliverableState = 'unverified'
     }
+    // The integration review stripped the worktree's secrets — restore them
+    // so later merges in a retry round and the user's own use of the
+    // worktree find their .envs.
+    await secretsStage('place', integrationWt, 'secrets-restore:integration')
     // Persist the fixer's declines/escalations: with no plan file to carry
     // Deviations, an unpersisted return would be the only record — lost.
     integration.fixNotes = fixNotes
