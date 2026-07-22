@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 #
 # orca pre-flight — read-only environment validation, run once during
-# Step 1 before the brief is confirmed. Run from the project root.
+# Step 1 before the brief is confirmed. Config and settings paths are
+# resolved from git (the common dir's parent for .orca/, the worktree
+# top level for .claude/), so running from a subdirectory can neither
+# silently downgrade a pinned reviewer nor produce false timeout FAILs.
 #
 # Reads one config key — "reviewer" from ./.orca/config.json — to decide
 # whether the codex gate applies; otherwise touches nothing. Prints one
@@ -46,6 +49,17 @@ else
   echo "TRUNK_CANDIDATE: ${trunk:-unknown}"
 fi
 
+# Path resolution from git, never CWD: the repo root (common-dir parent)
+# holds .orca/, and the worktree top level (when inside one) holds the
+# project .claude/ settings. Both empty outside a repo — the relative
+# fallbacks below then behave as before.
+repo_root=""
+worktree_root=""
+if [[ -n "$common_dir" ]]; then
+  repo_root="$(dirname "$common_dir")"
+  worktree_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+fi
+
 # --- REVIEWER: which independent reviewer runs — pinned in config, else detected ---
 # A written "reviewer" key in ./.orca/config.json pins the choice; absent, the
 # machine decides: codex binary on PATH at >= the minimum version -> codex,
@@ -75,7 +89,7 @@ fi
 reviewer=""
 reviewer_provenance=""
 reviewer_invalid=0
-config_file="./.orca/config.json"
+config_file="${repo_root:-.}/.orca/config.json"
 if [[ -f "$config_file" ]]; then
   reviewer_values="$(grep -o '"reviewer"[[:space:]]*:[[:space:]]*"[a-z]*"' "$config_file" 2>/dev/null \
     | grep -o '"[a-z]*"$' | tr -d '"' | sort -u || true)"
@@ -113,7 +127,13 @@ fi
 # writes. Nothing here can check what is LOADED in the current session —
 # the live check (does the codex MCP tool resolve?) is SKILL.md Step 1's
 # job, in the session itself.
-settings_files=("./.claude/settings.local.json" "./.claude/settings.json" "$HOME/.claude/settings.json")
+# Project settings can live in the worktree the session runs in or beside
+# the bare repo at the root; both are checked, then the user scope.
+settings_files=(
+  "${worktree_root:-.}/.claude/settings.local.json" "${worktree_root:-.}/.claude/settings.json"
+  "${repo_root:-.}/.claude/settings.local.json" "${repo_root:-.}/.claude/settings.json"
+  "$HOME/.claude/settings.json"
+)
 codex_fail() {
   echo "CODEX: FAIL: $1"
   fail=1

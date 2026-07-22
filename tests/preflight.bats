@@ -92,7 +92,6 @@ preflight_with_codex() { # <version> <ok|denied>
 @test "pinned reviewer is honored from a worktree subdirectory" {
   # finding 8.3: config paths resolve from CWD, so running anywhere but
   # the repo root silently downgrades a pinned reviewer to detection
-  skip "pending commit 8.3: preflight resolves config paths from the git root"
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   printf '{"reviewer":"claude"}\n' >"$BATS_TEST_TMPDIR/r/.orca/config.json"
   mkdir -p "$BATS_TEST_TMPDIR/r/main/src"
@@ -102,7 +101,6 @@ preflight_with_codex() { # <version> <ok|denied>
 }
 
 @test "settings env blocks are found from a worktree subdirectory" {
-  skip "pending commit 8.3: preflight resolves config paths from the git root"
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   printf '{"reviewer":"codex"}\n' >"$BATS_TEST_TMPDIR/r/.orca/config.json"
   mkdir -p "$BATS_TEST_TMPDIR/r/.claude"
