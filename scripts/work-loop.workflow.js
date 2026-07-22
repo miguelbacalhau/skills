@@ -525,8 +525,10 @@ const archivePlan = async (i, tag) => {
 // The regex holds only unambiguous attribution markers: "ai" and "agent" are
 // legitimate domain vocabulary ("user-agent header", "feat: add AI summarizer")
 // that false-positives constantly; keeping them out of ordinary prose is the
-// stage agents' own instruction, not something a regex can decide.
-const banned = /claude|anthropic|co-authored-by|generated (with|by)|\borca\b/i
+// stage agents' own instruction, not something a regex can decide. "orca" is
+// out for the same reason — dogfooding orca on the orca repo would rewrite
+// honest subjects like "feat: orca:status …" into chore: fallbacks.
+const banned = /claude|anthropic|co-authored-by|generated (with|by)/i
 // The agent may have made several commits, so the banned check must read every
 // message it created, never just the tip — a clean later commit would hide a
 // banned trailer beneath it. One command returns both the tip message (the
