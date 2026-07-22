@@ -227,7 +227,14 @@ const sh = async (cmd, label, ph) => {
 // worktree is "cannot test", never "bug present".
 const reproCheck = async (wt, label, ph) => {
   const r = await relay(`( cd "${wt}" || exit 125 ; ${reproCmd} )`, label, ph)
-  return { exitCode: r.exitCode, output: r.output.slice(-2000) }
+  // Normalize the cannot-test band: >127 is a signal death (137 = SIGKILL,
+  // the OOM killer's signature) and 124 is GNU timeout — neither is
+  // evidence the bug is present, and a correct fix must never be reverted
+  // because the tree was OOM-killed mid-check. Both collapse to 125,
+  // git-bisect's own skip code, so every consumer's three-band branch
+  // handles them as cannot-test.
+  const exitCode = (r.exitCode > 127 || r.exitCode === 124) ? 125 : r.exitCode
+  return { exitCode, rawExitCode: r.exitCode, output: r.output.slice(-2000) }
 }
 
 // sh() keeps any leading relay commentary in its output, so anything that
