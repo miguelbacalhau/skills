@@ -944,33 +944,51 @@ if (shipped.length) {
   }
 
   if (integration.fixesApplied) {
-    // One review-fix pass over the fixes (SKILL Step 4 tail). A failed review is recorded
-    // as a gap — never a reason to leave the fixes sitting uncommitted.
+    // Integration fixes pass the same gate items do (buildItem's bounded
+    // review → fix → re-review loop): block while Critical/High findings
+    // remain after two fix rounds, and never commit when the review itself
+    // failed — an unreviewed commit would ship the one edit in this run no
+    // independent reviewer ever saw. Uncommitted fixes stay in the
+    // integration worktree; the gap names the state for audit/retry.
+    let reviewedClean = false
     try {
-      const verdict = await review('integration', integrationWt, 0, 'integration')
-      if (verdict.total > 0)
-        must(await agent(
-          [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,
-           `Item: integration — fixes applied during integration verification`,
-           `There is no plan file for this item; the spec is the reference.`].join('\n'),
-          tuned('fix', { agentType: 'orca:fix', label: 'fix:integration', phase: 'Review' })),
-          'fix:integration')
-    } catch (err) {
-      const reason = String((err && err.message) || err)
-      log(`integration review did not complete — committing the fixes unreviewed (${reason})`)
-      integration.gaps.push(`integration fixes were committed without a completed independent review: ${reason}`)
-    }
-    try {
-      const status = await sh(
-        `[ -n "$(git -C "${integrationWt}" status --porcelain)" ] && echo DIRTY || echo CLEAN`,
-        'integration-status', 'Merge')
-      if (status.includes('DIRTY')) {
-        const c = await commitItem(integrationWt, 'integration', 'integration fixes from full-feature verification',
-          ['There is no plan file for this item; commit the integration fixes only.'])
-        log(`integration fixes committed (${c.hash})`)
+      const first = await review('integration', integrationWt, 0, 'integration')
+      if (first.total === 0) reviewedClean = true
+      else {
+        for (let round = 1; ; round++) {
+          must(await agent(
+            [`Worktree: ${integrationWt}`, `Run directory: ${runDir}`,
+             `Item: integration — fixes applied during integration verification`,
+             `There is no plan file for this item; the spec is the reference.`].join('\n'),
+            tuned('fix', { agentType: 'orca:fix', label: `fix:integration#${round}`, phase: 'Review' })),
+            `fix:integration#${round}`)
+          const verdict = await review('integration', integrationWt, round, 'integration')
+          if (verdict.criticalOrHigh === 0) { reviewedClean = true; break }
+          if (round === 2) {
+            log('integration fixes blocked: fix rounds exhausted with Critical/High findings remaining — left uncommitted')
+            integration.gaps.push('integration fixes blocked after two fix rounds with Critical/High findings remaining — left uncommitted in the integration worktree')
+            break
+          }
+        }
       }
     } catch (err) {
-      integration.gaps.push(`integration fixes could not be committed: ${String((err && err.message) || err)}`)
+      const reason = String((err && err.message) || err)
+      log(`integration review did not complete — fixes left uncommitted, branch unverified (${reason})`)
+      integration.gaps.push(`integration fixes were NOT committed: their independent review did not complete (${reason}) — they remain uncommitted in the integration worktree`)
+    }
+    if (reviewedClean) {
+      try {
+        const status = await sh(
+          `[ -n "$(git -C "${integrationWt}" status --porcelain)" ] && echo DIRTY || echo CLEAN`,
+          'integration-status', 'Merge')
+        if (status.includes('DIRTY')) {
+          const c = await commitItem(integrationWt, 'integration', 'integration fixes from full-feature verification',
+            ['There is no plan file for this item; commit the integration fixes only.'])
+          log(`integration fixes committed (${c.hash})`)
+        }
+      } catch (err) {
+        integration.gaps.push(`integration fixes could not be committed: ${String((err && err.message) || err)}`)
+      }
     }
   }
 }
