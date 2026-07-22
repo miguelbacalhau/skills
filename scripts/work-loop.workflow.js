@@ -772,13 +772,26 @@ const runWave = async wave => {
     esc.blocked.filter(b => live.some(i => i.id === b.id)).forEach(b => block(b.id, b.reason))
     esc.cut.filter(c => live.some(i => i.id === c.id)).forEach(c => cutItem(c.id, c.reason))
     applyDepAmendments(esc.addDeps, wave)
+    // Ordering constraint: the replan set is computed BEFORE the deferral
+    // pass below — deferral flips items back to `pending`, and an item that
+    // is both deferred and replanned would otherwise drop out of the replan
+    // filter, leaving its superseded plan at plans/<ID>.md to stall the
+    // fresh planner pump() spawns later (the W3 stall).
+    const replanSet = live.filter(i => esc.replan.includes(i.id) && state[i.id] === 'active')
     // A wave item whose amended dependencies are not all merged has not started
     // building (the build loop runs after this serialized section) — send it
     // back to pending; pump() relaunches it the moment they are.
     wave.filter(i => state[i.id] === 'active' &&
         i.deps.some(d => state[d] !== 'merged' && state[d] !== 'cut'))
       .forEach(i => { state[i.id] = 'pending'; log(`${i.id} deferred: an amended dependency must merge first`) })
-    const replan = live.filter(i => esc.replan.includes(i.id) && state[i.id] === 'active')
+    // Deferred-and-replanned items get the archive now: their next planner
+    // (spawned by pump() with no replan note) would otherwise find the
+    // superseded plan on disk and endorse it as finished work. Only items
+    // still active are replanned inside this wave.
+    const deferredReplans = replanSet.filter(i => state[i.id] !== 'active')
+    if (deferredReplans.length)
+      await parallel(deferredReplans.map(i => () => archivePlan(i, '#deferred')))
+    const replan = replanSet.filter(i => state[i.id] === 'active')
     if (replan.length) {
       await parallel(replan.map(i => () => archivePlan(i, '#2')))
       const second = await parallel(replan.map(i => () => planItem(i, waveReplanNote(i.id, rec.issues), '#2')))
