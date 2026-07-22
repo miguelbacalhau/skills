@@ -62,6 +62,20 @@ EOF
   has_line $'ARGS:\tabsent'
 }
 
+@test "a run dir with only brief.md is discovered as unlaunched" {
+  make_repo "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  mkdir -p .orca/20250101-1200-feat-alpha .orca/feat-briefs
+  echo '# brief' >.orca/20250101-1200-feat-alpha/brief.md
+  # a queued brief that happens to be named brief.md is NOT a run dir
+  echo '# queued' >.orca/feat-briefs/brief.md
+  run triage discover
+  [ "$status" -eq 0 ]
+  has_line $'RUN:\t'"$PWD/.orca/20250101-1200-feat-alpha"$'\tunlaunched'
+  refute_line $'RUN:\t'"$PWD/.orca/feat-briefs"
+  has_line $'BRIEF:\t'"$PWD/.orca/feat-briefs/brief.md"
+}
+
 @test "finished runs are DONE, routed by the report's Blocked section" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"

@@ -32,8 +32,11 @@
 #                                        launch's values under a newer runId
 #         REVIEWER:<TAB><value|absent>   legacy fallback, pre-args records;
 #         AGENTS:<TAB><json|absent>      same adjacency rule
-#       unlaunched -> spec.md carries no runId line: the run died before
-#       its workflow launched (not resumable).
+#       unlaunched -> spec.md carries no runId line, OR the directory holds
+#       brief.md with no spec.md yet (the session died between consuming
+#       the brief and writing the spec — the brief would otherwise be lost
+#       to all discovery, feat-briefs/ no longer holding it). Not
+#       journal-resumable; the run skill decides the recovery.
 #   DONE:<TAB><run-dir><TAB>clean|leftovers|unknown
 #       Finished feature runs: depth-1 spec.md WITH a sibling report.md.
 #       Emitted in directory order (timestamped names -> oldest first);
@@ -173,6 +176,19 @@ cmd_discover() {
     printf 'REVIEWER:\t%s\n' "${value:-absent}"
     value="$(record_value "$spec" "Workflow agents" "$run_ln")"
     printf 'AGENTS:\t%s\n' "${value:-absent}"
+  done
+
+  # --- runs that died between brief consumption and the spec write ---
+  # brief.md present, spec.md not yet: without this, the consumed brief is
+  # invisible to every discovery surface. feat-briefs/ and bug-cases/ are
+  # excluded — a queued brief named brief.md is not a run directory.
+  local briefmd bdir
+  for briefmd in "$orca"/*/brief.md; do
+    [[ -f "$briefmd" ]] || continue
+    bdir="$(dirname "$briefmd")"
+    case "$(basename "$bdir")" in feat-briefs | bug-cases) continue ;; esac
+    [[ -f "$bdir/spec.md" ]] && continue
+    printf 'RUN:\t%s\tunlaunched\n' "$bdir"
   done
 
   # --- queued briefs: top level only ---
