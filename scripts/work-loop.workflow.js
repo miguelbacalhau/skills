@@ -571,6 +571,15 @@ const commitItem = async (wt, id, title, extraLines = []) => {
             await sh(`git -C "${wt}" commit --amend -m '${sq(fallback)}'`, `wip-rewrite:${id}`, 'Merge')
             return { hash: await head('wip-rewrite'), message: fallback }
           }
+          // Prior commits carry a banned marker (they predate this run's
+          // checks — e.g. an older plugin's round). The item IS built;
+          // falling through to "commit agent made no commit" would block a
+          // finished item on a false premise. Squash the span behind a
+          // clean message instead — built, with rewritten attribution.
+          const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
+          await sh(`git -C "${wt}" reset --soft "$(git -C "${wt}" merge-base "${integrationBranch}" HEAD)" && ` +
+                   `git -C "${wt}" commit -m '${sq(fallback)}'`, `prior-rewrite:${id}`, 'Merge')
+          return { hash: await head('prior-rewrite'), message: fallback }
         }
         throw new Error('commit agent made no commit')
       }
