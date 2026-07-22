@@ -114,6 +114,63 @@ make_secrets_layout() { # <dir>
   [ -L "$BATS_TEST_TMPDIR/c/.git/keep-me-too" ]
 }
 
+@test "a link into another repo's secrets tree is never repaired or replaced" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  make_secrets_layout "$BATS_TEST_TMPDIR/other"
+  echo 'SECRET=1' >"$BATS_TEST_TMPDIR/r/.orca/secrets/.env"
+  echo 'FOREIGN=1' >"$BATS_TEST_TMPDIR/other/.orca/secrets/.env"
+  ln -s "$BATS_TEST_TMPDIR/other/.orca/secrets/.env" "$BATS_TEST_TMPDIR/r/main/.env"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  has_line $'SKIPPED_EXISTS:\t.env'
+  [ "$(readlink "$BATS_TEST_TMPDIR/r/main/.env")" = "$BATS_TEST_TMPDIR/other/.orca/secrets/.env" ]
+}
+
+@test "sweep leaves a dangling link into another repo's secrets alone" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  ln -s "$BATS_TEST_TMPDIR/gone-repo/.orca/secrets/.env" "$BATS_TEST_TMPDIR/r/main/.env"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  refute_line 'SKIPPED_GONE:'
+  [ -L "$BATS_TEST_TMPDIR/r/main/.env" ]
+}
+
+@test "sweep leaves a backup.orca look-alike path alone" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  # the old substring test (*.orca/secrets/*) matched this and deleted it
+  ln -s "$BATS_TEST_TMPDIR/backup.orca/secrets/x" "$BATS_TEST_TMPDIR/r/main/x"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  refute_line 'SKIPPED_GONE:'
+  [ -L "$BATS_TEST_TMPDIR/r/main/x" ]
+}
+
+@test "an absolute link to the exact right secret is normalized, not skipped" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r"
+  echo 'SECRET=1' >"$BATS_TEST_TMPDIR/r/.orca/secrets/.env"
+  ln -s "$BATS_TEST_TMPDIR/r/.orca/secrets/.env" "$BATS_TEST_TMPDIR/r/main/.env"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r/main"
+  [ "$status" -eq 0 ]
+  has_line $'RELINKED:\t.env'
+  [ "$(readlink "$BATS_TEST_TMPDIR/r/main/.env")" = "../.orca/secrets/.env" ]
+}
+
+@test "a repo path containing glob metacharacters still sweeps correctly" {
+  make_secrets_layout "$BATS_TEST_TMPDIR/r[1]"
+  echo 'SECRET=1' >"$BATS_TEST_TMPDIR/r[1]/.orca/secrets/.env"
+  bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r[1]/main" >/dev/null
+  rm "$BATS_TEST_TMPDIR/r[1]/.orca/secrets/.env"
+  # a protected link under .orca must survive the sweep despite the [ in
+  # the -path pattern; the placed dangling link must still be swept
+  mkdir -p "$BATS_TEST_TMPDIR/r[1]/main/.orca"
+  ln -s /gone "$BATS_TEST_TMPDIR/r[1]/main/.orca/keep"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/r[1]/main"
+  [ "$status" -eq 0 ]
+  has_line $'SKIPPED_GONE:\t.env'
+  [ ! -L "$BATS_TEST_TMPDIR/r[1]/main/.env" ]
+  [ -L "$BATS_TEST_TMPDIR/r[1]/main/.orca/keep" ]
+}
+
 @test "misuse fails typed: bad args and non-worktree" {
   run bash "$SCRIPTS/secrets.sh" place
   assert_fail_reason BAD_ARGS

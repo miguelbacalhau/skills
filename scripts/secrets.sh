@@ -32,7 +32,13 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1
-#       reasons: BAD_ARGS NOT_GIT OUTSIDE_ROOT
+#       reasons: BAD_ARGS NOT_GIT OUTSIDE_ROOT NO_PYTHON3
+#
+# Ownership is by RESOLVED target, never substring: a symlink is ours to
+# manage (repair, replace, or sweep) only when resolving it lands on this
+# repository's .orca/secrets tree at the same relative destination. A link
+# into another repo's .orca/secrets, a backup.orca/secrets/x path, or any
+# other look-alike is state — skipped in the walk, left alone by the sweep.
 #
 # Per-file problems are typed skips on a zero exit — placement is best
 # effort and must never fail the caller's compound command; only misuse
@@ -75,6 +81,29 @@ else
   fail OUTSIDE_ROOT "$worktree is not under the repo root $repo_root — relative links cannot be computed"
 fi
 
+# Canonical target of a symlink, existence NOT required (dangling links
+# must still resolve so the sweep can judge them). python3 because realpath
+# -m is not portable to macOS; the plugin already requires python3
+# (config.sh's strict JSON handling).
+command -v python3 >/dev/null 2>&1 \
+  || fail NO_PYTHON3 "python3 not on PATH — required to resolve symlink ownership"
+resolve_link() { # <link-path> — canonical absolute target on stdout
+  python3 - "$1" <<'PY'
+import os, sys
+p = sys.argv[1]
+t = os.readlink(p)
+if not os.path.isabs(t):
+    t = os.path.join(os.path.dirname(p), t)
+print(os.path.realpath(t))
+PY
+}
+# The canonical secrets root — the right-hand side of every ownership test.
+secrets_canon="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$secrets_dir")"
+
+# Escape glob metacharacters so a repo path containing [ ] * ? \ cannot
+# corrupt find -path patterns.
+escape_glob() { printf '%s' "$1" | sed 's/[][*?\\]/\\&/g'; }
+
 # Component count of a relative path ("" → 0, "a/b/c" → 3).
 depth_of() {
   local p="$1"
@@ -114,27 +143,28 @@ if [[ -d "$secrets_dir" ]]; then
 
     if [[ -L "$dest" ]]; then
       cur="$(readlink "$dest" || true)"
-      case "$cur" in
-        *.orca/secrets/*)
-          # Ours to fix: replace a broken or wrong-depth link; an already
-          # correct one is the idempotent re-run's OK.
-          if [[ "$cur" == "$target" ]]; then
-            printf 'OK:\t%s\n' "$rel"
-            placed=$((placed + 1))
-          elif rm -f "$dest" 2>/dev/null && ln -s "$target" "$dest" 2>/dev/null; then
-            printf 'RELINKED:\t%s\n' "$rel"
-            placed=$((placed + 1))
-          else
-            printf 'SKIPPED_ERROR:\t%s\n' "$rel"
-            skipped=$((skipped + 1))
-          fi
-          ;;
-        *)
-          # A symlink somebody else made is state, exactly like a real file.
-          printf 'SKIPPED_EXISTS:\t%s\n' "$rel"
+      resolved="$(resolve_link "$dest" 2>/dev/null || true)"
+      if [[ "$resolved" == "$secrets_canon/$rel" ]]; then
+        # Ours (resolves to this repo's secrets file for this destination):
+        # normalize a non-canonical spelling (absolute path, redundant
+        # components); an already correct one is the idempotent re-run's OK.
+        if [[ "$cur" == "$target" ]]; then
+          printf 'OK:\t%s\n' "$rel"
+          placed=$((placed + 1))
+        elif rm -f "$dest" 2>/dev/null && ln -s "$target" "$dest" 2>/dev/null; then
+          printf 'RELINKED:\t%s\n' "$rel"
+          placed=$((placed + 1))
+        else
+          printf 'SKIPPED_ERROR:\t%s\n' "$rel"
           skipped=$((skipped + 1))
-          ;;
-      esac
+        fi
+      else
+        # A symlink that resolves anywhere else — another repo's secrets, a
+        # look-alike path, a wrong destination — is somebody's state,
+        # exactly like a real file. Never repaired, never replaced.
+        printf 'SKIPPED_EXISTS:\t%s\n' "$rel"
+        skipped=$((skipped + 1))
+      fi
     elif [[ -e "$dest" ]]; then
       printf 'SKIPPED_EXISTS:\t%s\n' "$rel"
       skipped=$((skipped + 1))
@@ -155,19 +185,21 @@ fi
 # ---- sweep: a dangling link whose canonical file is gone is a trap ----
 # Runs after the walk, so a broken link whose source still exists was
 # already repaired above and resolves here; what remains broken has no
-# source to point at — remove it rather than leave a dead .env.
+# source to point at — remove it rather than leave a dead .env. Ownership
+# is the resolved-target test: the dangling link must resolve to THIS
+# repo's secrets tree at its own relative destination, or it is left
+# alone (a link into another repo's .orca/secrets, or a backup.orca
+# look-alike, is not ours to delete).
+wt_glob="$(escape_glob "$worktree")"
 while IFS= read -r -d '' lnk; do
-  cur="$(readlink "$lnk" || true)"
-  case "$cur" in
-    *.orca/secrets/*) ;;
-    *) continue ;;
-  esac
   [[ -e "$lnk" ]] && continue
   rel="${lnk#"$worktree"/}"
+  resolved="$(resolve_link "$lnk" 2>/dev/null || true)"
+  [[ "$resolved" == "$secrets_canon/$rel" ]] || continue
   rm -f "$lnk" 2>/dev/null || true
   printf 'SKIPPED_GONE:\t%s\n' "$rel"
   skipped=$((skipped + 1))
-done < <(find "$worktree" \( -name .git -o -path "$worktree/.orca" \) -prune -o -type l -print0 2>/dev/null | LC_ALL=C sort -z)
+done < <(find "$worktree" \( -name .git -o -path "$wt_glob/.orca" \) -prune -o -type l -print0 2>/dev/null | LC_ALL=C sort -z)
 
 if (( placed == 0 && skipped == 0 )); then
   printf 'OK:\tno secrets\n'
