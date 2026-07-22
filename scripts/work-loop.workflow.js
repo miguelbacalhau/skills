@@ -1003,7 +1003,11 @@ const runItem = async item => {
           { model: 'opus', effort: 'high', label: `escalate:${item.id}`, phase: 'Build', schema: BUILD_ESCALATE }))
       } catch (e) { /* fall through: a dead escalation agent means block */ }
       if (!esc || esc.action === 'block') { await salvageWorktree(item); return block(item.id, (esc && esc.reason) || reason) }
-      if (esc.action === 'cut') return cutItem(item.id, esc.reason)
+      // A cut is terminal like a block: the same salvage (WIP commit on the
+      // kept branch, worktree removed) keeps partial work reachable and
+      // stops a later same-slug run from hitting WORKTREE_REUSED for an
+      // item the spec no longer contains.
+      if (esc.action === 'cut') { await salvageWorktree(item); return cutItem(item.id, esc.reason) }
       log(`${item.id}: spec amended after "${reason}" — replanning and rebuilding once`)
       await archivePlan(item, '#rebuild')
       const p = await planItem(item, rebuildReplanNote(item.id, reason), '#rebuild')
