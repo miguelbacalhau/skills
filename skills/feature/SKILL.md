@@ -95,11 +95,10 @@ The run only stays autonomous if the harness will not raise permission prompts: 
 
 **This requires `bypassPermissions` mode — an allow-list is not sufficient.** The subagents are themselves models that decide commands at runtime (dependency installs, build and test variants, git invocations with assorted flags, `find`, `sed`, and so on), so the command set is open-ended and no static `permissions.allow` list can anticipate it. Beyond that, the harness matches Bash rules as prefix globs against the literal command string, so even listed commands slip through when they contain `$(…)` substitutions, lead with flags like `git --git-dir=…`, or are compound (`cd foo && …`). A leaked prompt is therefore a question of *when*, not *whether* — which is why the fix is the session mode, not the rules.
 
-The skill cannot flip the mode itself, so confirm it during this step, before the confirmation: the session must be in `bypassPermissions` mode for the run. Enable it one of three ways:
+The skill cannot flip the mode itself, so confirm it during this step, before the confirmation: the session must be in `bypassPermissions` mode for the run. Enable it per session, one of two ways — never by writing it into a settings file, which would disable the approval gate for every future session in that worktree, not just orca runs:
 
 - **In-session toggle** — press Shift+Tab to cycle the permission mode until the footer shows "bypass permissions". Easiest; do it right before the run.
-- **Launch flag** — start the CLI with `claude --dangerously-skip-permissions`.
-- **Settings** — `"permissions": { "defaultMode": "bypassPermissions" }` in `.claude/settings.local.json`, for a repo where runs are always unattended.
+- **Launch flag** — start this session's CLI with `claude --dangerously-skip-permissions`.
 
 Make the tradeoff explicit to the user: bypass mode disables the approval gate for the *whole* session, not just this run's commands. That is the point — the run is designed to be unattended — but any other work in the same session loses the gate too, so a dedicated session for the run is the clean choice. If the user will not enable bypass mode now, the run cannot start — it would not be autonomous, and an allow-list would only let it pause partway — but do not fail the invocation: the brief is already durable. Report that the brief is saved and queued, that enabling bypass (Shift+Tab) and re-invoking `/orca:feature` — ideally in a dedicated session — will find it and run it, and end cleanly.
 
