@@ -71,6 +71,21 @@ common_dir="$(git -C "$worktree" rev-parse --path-format=absolute --git-common-d
 repo_root="$(dirname "$common_dir")"
 secrets_dir="$repo_root/.orca/secrets"
 
+# Conventional checkout only (the bare layout's .orca/ sits outside every
+# worktree): make sure the per-clone ignore file excludes .orca/ before any
+# placement, so a checkout that never ran `orca:config set` still cannot
+# `git add -A` its .orca/secrets tree. Mirrors config.sh's ensure_exclude —
+# the two must stay behaviorally identical. Idempotent, best-effort.
+is_bare="$(git --git-dir="$common_dir" rev-parse --is-bare-repository 2>/dev/null || true)"
+ensure_exclude() {
+  [[ "$is_bare" == "true" ]] && return 0
+  [[ -e "$repo_root/.orca" ]] || return 0
+  local exclude="$common_dir/info/exclude"
+  mkdir -p "$common_dir/info" 2>/dev/null || return 0
+  grep -qxF '.orca/' "$exclude" 2>/dev/null || printf '.orca/\n' >>"$exclude" 2>/dev/null || true
+}
+ensure_exclude
+
 # Relative links are computed from the worktree's position under the repo
 # root; a worktree elsewhere on disk has no stable relative path to .orca/.
 if [[ "$worktree" == "$repo_root" ]]; then

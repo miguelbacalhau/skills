@@ -171,6 +171,16 @@ make_secrets_layout() { # <dir>
   [ -L "$BATS_TEST_TMPDIR/r[1]/main/.orca/keep" ]
 }
 
+@test "place git-excludes the secrets tree in a conventional checkout" {
+  make_repo "$BATS_TEST_TMPDIR/c"
+  mkdir -p "$BATS_TEST_TMPDIR/c/.orca/secrets"
+  echo 'x' >"$BATS_TEST_TMPDIR/c/.orca/secrets/x"
+  cd "$BATS_TEST_TMPDIR/c"
+  run bash "$SCRIPTS/secrets.sh" place "$BATS_TEST_TMPDIR/c"
+  [ "$status" -eq 0 ]
+  git check-ignore -q .orca/secrets/x
+}
+
 @test "misuse fails typed: bad args and non-worktree" {
   run bash "$SCRIPTS/secrets.sh" place
   assert_fail_reason BAD_ARGS
