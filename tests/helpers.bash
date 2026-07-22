@@ -9,6 +9,10 @@ ORCA_ROOT="$(cd "$(dirname "$BATS_TEST_FILENAME")/.." && pwd)"
 SCRIPTS="$ORCA_ROOT/scripts"
 
 setup() {
+  # Canonicalize: on macOS the temp dir lives behind a /var → /private/var
+  # symlink, and the scripts emit git-resolved (physical) paths — every
+  # $BATS_TEST_TMPDIR/$PWD-based expectation must be physical too.
+  BATS_TEST_TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME"
   export GIT_CONFIG_GLOBAL=/dev/null
@@ -34,7 +38,7 @@ make_bare_layout() {
   ( cd "$1" &&
     echo '.env' >.gitignore &&
     git add .gitignore && git commit -qm gitignore &&
-    /usr/bin/mv .git .bare &&
+    mv .git .bare &&
     git --git-dir=.bare config core.bare true &&
     printf 'gitdir: ./.bare\n' >.git &&
     git worktree add main main >/dev/null 2>&1 )

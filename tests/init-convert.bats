@@ -107,12 +107,15 @@ convert_repo() { # <dir> — run convert inside it
   echo 1 >aaa.txt
   echo 2 >killme.txt
   echo 3 >zzz.txt
-  # a PATH-injected mv that SIGTERMs the script when it reaches killme.txt
+  # a PATH-injected mv that SIGTERMs the script when it reaches killme.txt;
+  # the real mv's path is baked in now, before the injection (it lives at
+  # /bin/mv on macOS, /usr/bin/mv on most Linux)
+  real_mv="$(command -v mv)"
   mkdir "$BATS_TEST_TMPDIR/fakebin"
-  cat >"$BATS_TEST_TMPDIR/fakebin/mv" <<'EOF'
+  cat >"$BATS_TEST_TMPDIR/fakebin/mv" <<EOF
 #!/usr/bin/env bash
-if [[ "$1" == *killme* ]]; then kill -TERM $PPID; sleep 2; exit 1; fi
-exec /usr/bin/mv "$@"
+if [[ "\$1" == *killme* ]]; then kill -TERM \$PPID; sleep 2; exit 1; fi
+exec "$real_mv" "\$@"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/fakebin/mv"
   PATH="$BATS_TEST_TMPDIR/fakebin:$PATH" run bash "$SCRIPTS/init-convert.sh" convert
@@ -138,7 +141,7 @@ EOF
   mkdir .orca
   printf 'note.txt\0' >.orca/init-convert-manifest
   printf 'begin\0main\0step\0mv-git-bare\0' >.orca/init-convert-journal
-  /usr/bin/mv .git .bare
+  mv .git .bare
   run bash "$SCRIPTS/init-convert.sh" recover
   [ "$status" -eq 0 ]
   has_line $'MOVED:\t1'

@@ -75,6 +75,17 @@ fail() { # <reason> <detail> — typed failure, exit 1
   exit 1
 }
 
+# Exact-string membership over an argument list — bash 3.2 (macOS) has no
+# associative arrays.
+in_list() { # <needle> [haystack...]
+  local needle="$1" e
+  shift
+  for e in "$@"; do
+    [[ "$e" == "$needle" ]] && return 0
+  done
+  return 1
+}
+
 # Crash journal: NUL-terminated (verb, detail) pairs, appended and fsync'd
 # by the shell's O_APPEND semantics. Verbs: begin <branch>, step <name>,
 # intent <path>, done <path>, interrupted <signal>. recover replays it.
@@ -392,22 +403,25 @@ cmd_cleanup() {
   # HEAD (the old checkout the worktree now owns) or the top-level parent of
   # a manifest entry (emptied of its moved untracked files). Anything else —
   # an orca-<slug> worktree, a stray file created after convert — is refused
-  # by name, and nothing is deleted.
+  # by name, and nothing is deleted. Indexed arrays with a linear-search
+  # helper, not associative arrays: macOS ships bash 3.2, which has no
+  # declare -A. The ${arr[@]+...} expansions guard empty arrays under set -u
+  # (an error in bash < 4.4).
   local f
-  declare -A allowed=()
+  local -a allowed=()
   while IFS= read -r -d '' f; do
-    allowed["$f"]=1
+    allowed+=("$f")
   done < <(git --git-dir="$common_dir" ls-tree --name-only -z HEAD)
   while IFS= read -r -d '' f; do
-    allowed["${f%%/*}"]=1
+    allowed+=("${f%%/*}")
   done <"$manifest"
 
   # Registered worktrees are never deletable, whatever the sets say.
   local wt_line
-  declare -A worktrees=()
+  local -a worktrees=()
   while IFS= read -r wt_line; do
     [[ "$wt_line" == worktree\ * ]] || continue
-    worktrees["${wt_line#worktree }"]=1
+    worktrees+=("${wt_line#worktree }")
   done < <(git --git-dir="$common_dir" worktree list --porcelain)
 
   local entry name removed=0 refused=""
@@ -415,7 +429,8 @@ cmd_cleanup() {
   for entry in "$root"/*; do
     name="${entry##*/}"
     case "$name" in .bare | .git | .orca | "$branch") continue ;; esac
-    if [[ -n "${worktrees[$entry]:-}" || -z "${allowed[$name]:-}" ]]; then
+    if in_list "$entry" ${worktrees[@]+"${worktrees[@]}"} ||
+       ! in_list "$name" ${allowed[@]+"${allowed[@]}"}; then
       refused="${refused:+$refused, }$entry"
     fi
   done

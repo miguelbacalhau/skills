@@ -61,10 +61,12 @@ if [[ "$bump" != major ]]; then
   # BREAKING CHANGE must be a footer token: only each body's final
   # paragraph is scanned, so prose or a quoted mention mid-body never
   # majors a release.
+  # %x01 as the record separator, not NUL: BSD awk (macOS, where the test
+  # suite also runs this) does not honor a NUL RS.
   while IFS= read -r line; do
     if [[ "$line" =~ $footer_re ]]; then bump=major; break; fi
-  done < <(git log --format='%b%x00' "$base..HEAD" -- "${SHIPPED[@]}" | awk '
-    BEGIN { RS = "\0" }
+  done < <(git log --format='%b%x01' "$base..HEAD" -- "${SHIPPED[@]}" | awk '
+    BEGIN { RS = "\001" }
     {
       n = split($0, L, "\n")
       end = 0
@@ -82,7 +84,11 @@ case "$bump" in
   *)     bumped="$major.$minor.$((patch + 1))" ;;
 esac
 
-sed -i "s/\"version\": *\"$current\"/\"version\": \"$bumped\"/" "$MANIFEST"
+# Portable in-place edit: BSD sed's -i takes a mandatory suffix argument,
+# so GNU-style `sed -i "s/…/"` breaks on macOS (where the test suite runs
+# this too). Temp file + mv works everywhere.
+sed "s/\"version\": *\"$current\"/\"version\": \"$bumped\"/" "$MANIFEST" >"$MANIFEST.tmp"
+mv "$MANIFEST.tmp" "$MANIFEST"
 git add "$MANIFEST"
 git commit --quiet -m "chore: bump plugin version to $bumped"
 # A push that lands mid-run rejects ours; rebase once and retry — if that also
