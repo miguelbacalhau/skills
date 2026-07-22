@@ -133,7 +133,9 @@ py() {
 import json, os, sys, tempfile
 
 # One shared validation vocabulary kept in lockstep across three code
-# validators: this script, work-loop.workflow.js, and debug-loop.workflow.js.
+# validators: this script, work-loop.workflow.js, and debug-loop.workflow.js
+# — plus a fourth holder of MODELS/EFFORTS: spec.workflow.js, which validates
+# the spec spawn's model/effort overrides at launch.
 # The workflow scripts run sandboxed with no filesystem access, so they carry
 # their own literal copies — a value accepted here but rejected there bricks
 # that verb's launches until the config file is hand-edited.

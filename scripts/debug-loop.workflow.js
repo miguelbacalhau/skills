@@ -121,7 +121,9 @@ if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.s
 // via its validate subcommand), work-loop.workflow.js, and this script: the
 // config file has a single agents block, and a key accepted by any validator
 // must be accepted by all three, or a written override bricks the other
-// verb's launches. This script applies
+// verb's launches. MODELS/EFFORTS have a FOURTH holder: spec.workflow.js
+// carries its own literal copies for the spec spawn's model/effort
+// validation. This script applies
 // only the debug stages; the rest are validated here and applied by the
 // nested work loop, which receives the block verbatim.
 const DEBUG_TUNABLE = ['reproduce', 'hypothesize', 'verify', 'diagnose']

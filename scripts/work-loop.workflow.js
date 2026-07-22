@@ -205,9 +205,10 @@ const STAGES = ['spec', ...TUNABLE, 'reproduce', 'hypothesize', 'verify', 'diagn
 // launch validation via its validate subcommand), this script, and
 // debug-loop.workflow.js — a value accepted anywhere but rejected here bricks
 // every launch until the config file is hand-edited. MODELS/EFFORTS are part
-// of the same lockstep. Workflow scripts run sandboxed with no filesystem
-// access, so they cannot read a shared vocab file — the literal copies are
-// the design.
+// of the same lockstep, with a FOURTH holder: spec.workflow.js carries its
+// own literal copies for the spec spawn's model/effort validation. Workflow
+// scripts run sandboxed with no filesystem access, so they cannot read a
+// shared vocab file — the literal copies are the design.
 const MODELS = ['haiku', 'sonnet', 'opus', 'fable']
 const EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
 let agentCfg = parsedArgs.agents ?? {}
