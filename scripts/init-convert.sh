@@ -13,6 +13,7 @@
 #   init-convert.sh check
 #   init-convert.sh convert
 #   init-convert.sh cleanup
+#   init-convert.sh recover
 #
 # Output contract — one machine-readable line per fact, TAB-separated:
 #
@@ -50,18 +51,84 @@
 #   REMOVED:<TAB><path> line per deleted entry and a final CLEANED:<TAB><n>,
 #   and consumes the manifest.
 #
+#   recover (mutating): completes a conversion that a crash or signal cut
+#   short. convert journals every structural step and every file move
+#   (intent before, done after) to .orca/init-convert-journal and traps
+#   INT/TERM/HUP; recover reads the journal plus the on-disk state, rolls
+#   the conversion forward (bare config, pointer file, worktree, remaining
+#   manifest moves — each idempotent), re-verifies, and consumes the
+#   journal. Run it from the repository root. If the crash predated any
+#   mutation it just removes the journal.
+#
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1
 #       reasons: NOT_GIT ALREADY_CONVERTED LINKED_WORKTREE NOT_CONVENTIONAL
 #                DETACHED_HEAD BRANCH_UNSAFE PRECONDITION CONVERT_FAILED
 #                NOT_CONVERTED NO_WORKTREE NO_MANIFEST MANIFEST_MISMATCH
-#                BAD_ARGS
+#                INTERRUPTED NO_JOURNAL BAD_ARGS
 
 set -uo pipefail
 
 fail() { # <reason> <detail> — typed failure, exit 1
   printf 'FAIL:\t%s\t%s\n' "$1" "$2"
   exit 1
+}
+
+# Crash journal: NUL-terminated (verb, detail) pairs, appended and fsync'd
+# by the shell's O_APPEND semantics. Verbs: begin <branch>, step <name>,
+# intent <path>, done <path>, interrupted <signal>. recover replays it.
+journal_path() { printf '%s/.orca/init-convert-journal' "$root"; }
+journal_append() { printf '%s\0%s\0' "$1" "$2" >>"$(journal_path)"; }
+
+on_signal() { # <signal-name> — journal the interruption and die typed
+  journal_append interrupted "$1"
+  printf 'FAIL:\tINTERRUPTED\tconversion interrupted by SIG%s — run init-convert.sh recover from the repository root\n' "$1"
+  trap - INT TERM HUP
+  exit 1
+}
+install_traps() {
+  trap 'on_signal INT' INT
+  trap 'on_signal TERM' TERM
+  trap 'on_signal HUP' HUP
+}
+
+# Move every manifest entry not yet at its destination into the worktree,
+# journaling intent before and done after each move. Idempotent: entries
+# already moved are skipped, so convert and recover share it. Sets
+# $moved_count (no subshell — fail must reach the caller's stdout/exit).
+move_manifest_entries() { # uses $root $branch $manifest
+  local f dest
+  moved_count=0
+  while IFS= read -r -d '' f; do
+    if [[ ! -e "$root/$f" && ! -L "$root/$f" ]]; then
+      continue # already moved (or a prior run finished this one)
+    fi
+    dest="$root/$branch/$f"
+    journal_append intent "$f"
+    mkdir -p "${dest%/*}" \
+      || fail CONVERT_FAILED "mkdir failed for $f — moves incomplete; run init-convert.sh recover"
+    mv "$root/$f" "$dest" \
+      || fail CONVERT_FAILED "move failed for $f — moves incomplete; run init-convert.sh recover"
+    journal_append done "$f"
+    moved_count=$((moved_count + 1))
+  done <"$manifest"
+}
+
+# Emit the VERIFY line: tracked files clean in the worktree, manifest
+# entries all arrived. Uses $root $branch $manifest.
+verify_conversion() {
+  local f tracked_dirty missing=0 total=0
+  tracked_dirty="$(git -C "$root/$branch" status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
+  while IFS= read -r -d '' f; do
+    total=$((total + 1))
+    [[ -e "$root/$branch/$f" || -L "$root/$branch/$f" ]] || missing=$((missing + 1))
+  done <"$manifest"
+  local tracked_summary untracked_summary
+  if [[ "$tracked_dirty" -eq 0 ]]; then tracked_summary="tracked-clean"
+  else tracked_summary="$tracked_dirty tracked paths differ"; fi
+  if [[ "$missing" -eq 0 ]]; then untracked_summary="all $total untracked arrived"
+  else untracked_summary="$missing of $total untracked missing"; fi
+  printf 'VERIFY:\t%s\t%s\n' "$tracked_summary" "$untracked_summary"
 }
 
 # check/convert run against a conventional main checkout; resolve its root
@@ -166,52 +233,104 @@ cmd_convert() {
     rm -f "$tmp_manifest"
     fail CONVERT_FAILED "$root/$branch already exists — move it aside first (nothing was changed)"
   fi
+  # Manifest and journal both live under .orca (kept at the top level) so
+  # they survive any crash from here on. Journal first: begin marks the
+  # point of no return, each structural step is journaled before it runs,
+  # and the traps turn a signal into a typed FAIL pointing at recover.
+  mkdir -p "$root/.orca"
+  local manifest="$root/.orca/init-convert-manifest"
+  mv "$tmp_manifest" "$manifest" \
+    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "could not persist the manifest (nothing was changed)"; }
+  rm -f "$(journal_path)"
+  install_traps
+  journal_append begin "$branch"
+
   # One rollback sequence, safe at every failure point after the first mv:
   # the worktree removal and pointer-file rm are no-ops (-rf/-f) where those
   # steps had not happened yet, and .git must be gone before .bare can move
   # back. Runs before the untracked moves, so rm -rf of the fresh worktree
   # deletes only checked-out tracked files.
   local revert="reversible: cd $(printf '%q' "$root") && rm -rf ./$(printf '%q' "$branch") && rm -f .git && mv .bare .git && git config core.bare false && git worktree prune"
+  journal_append step mv-git-bare
   mv "$root/.git" "$root/.bare" \
-    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "mv .git .bare failed (nothing was changed)"; }
+    || { rm -f "$manifest" "$(journal_path)"; fail CONVERT_FAILED "mv .git .bare failed (nothing was changed)"; }
+  journal_append step core-bare
   git --git-dir="$root/.bare" config core.bare true \
-    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "core.bare write failed — $revert"; }
+    || fail CONVERT_FAILED "core.bare write failed — $revert"
+  journal_append step pointer-file
   printf 'gitdir: ./.bare\n' >"$root/.git" \
-    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "writing the .git pointer file failed — $revert"; }
+    || fail CONVERT_FAILED "writing the .git pointer file failed — $revert"
+  journal_append step worktree-add
   git -C "$root" worktree add "$root/$branch" "$branch" >/dev/null 2>&1 \
-    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "worktree add failed — $revert"; }
-
-  mkdir -p "$root/.orca"
-  local manifest="$root/.orca/init-convert-manifest"
-  mv "$tmp_manifest" "$manifest"
+    || fail CONVERT_FAILED "worktree add failed — $revert"
 
   # The data-loss step, NUL-safe: every untracked file into the worktree,
   # relative paths preserved. Parent dirs via ${dest%/*}, not dirname — a
   # command substitution would strip trailing newlines from a parent path.
-  local f dest moved=0
-  while IFS= read -r -d '' f; do
-    dest="$root/$branch/$f"
-    mkdir -p "${dest%/*}" \
-      || fail CONVERT_FAILED "mkdir failed for $f — moves incomplete; the manifest is $manifest"
-    mv "$root/$f" "$dest" \
-      || fail CONVERT_FAILED "move failed for $f — moves incomplete; the manifest is $manifest"
-    moved=$((moved + 1))
-  done <"$manifest"
-  printf 'MOVED:\t%s\n' "$moved"
+  # Each move is journaled intent-then-done so recover knows where a crash
+  # landed.
+  move_manifest_entries
+  printf 'MOVED:\t%s\n' "$moved_count"
 
-  # Verify: tracked files clean in the new worktree, manifest files arrived.
-  local tracked_dirty missing=0 total=0
-  tracked_dirty="$(git -C "$root/$branch" status --porcelain --untracked-files=no | wc -l | tr -d ' ')"
-  while IFS= read -r -d '' f; do
-    total=$((total + 1))
-    [[ -e "$root/$branch/$f" || -L "$root/$branch/$f" ]] || missing=$((missing + 1))
-  done <"$manifest"
-  local tracked_summary untracked_summary
-  if [[ "$tracked_dirty" -eq 0 ]]; then tracked_summary="tracked-clean"
-  else tracked_summary="$tracked_dirty tracked paths differ"; fi
-  if [[ "$missing" -eq 0 ]]; then untracked_summary="all $total untracked arrived"
-  else untracked_summary="$missing of $total untracked missing"; fi
-  printf 'VERIFY:\t%s\t%s\n' "$tracked_summary" "$untracked_summary"
+  verify_conversion
+  trap - INT TERM HUP
+  rm -f "$(journal_path)"
+  exit 0
+}
+
+cmd_recover() {
+  # A crash can land anywhere — including between mv .git .bare and the
+  # pointer-file write, where git cannot even see a repository — so recover
+  # trusts the journal plus the filesystem, not git. Run from the root.
+  root="$(pwd -P)"
+  if [[ ! -f "$(journal_path)" ]]; then
+    fail NO_JOURNAL "no .orca/init-convert-journal here — nothing to recover (run from the repository root)"
+  fi
+  # branch comes from the journal's begin record — HEAD may be unreadable.
+  local verb detail
+  branch=""
+  while IFS= read -r -d '' verb && IFS= read -r -d '' detail; do
+    [[ "$verb" == begin ]] && branch="$detail"
+  done <"$(journal_path)"
+  if [[ -z "$branch" ]]; then
+    fail CONVERT_FAILED "journal has no begin record — refusing to guess; inspect $(journal_path) by hand"
+  fi
+
+  if [[ -d "$root/.git" && ! -e "$root/.bare" ]]; then
+    # Crashed before the first mv: nothing structural happened.
+    rm -f "$(journal_path)"
+    printf 'MOVED:\t0\n'
+    printf 'VERIFY:\tnothing to recover — conversion had not started\t-\n'
+    exit 0
+  fi
+  if [[ ! -d "$root/.bare" ]]; then
+    fail CONVERT_FAILED "neither .git nor .bare is a directory at $root — inspect by hand"
+  fi
+
+  install_traps
+  # Roll forward, each step idempotent in journal order.
+  git --git-dir="$root/.bare" config core.bare true \
+    || fail CONVERT_FAILED "core.bare write failed"
+  if [[ ! -e "$root/.git" ]]; then
+    printf 'gitdir: ./.bare\n' >"$root/.git" \
+      || fail CONVERT_FAILED "writing the .git pointer file failed"
+  fi
+  git -C "$root" worktree prune >/dev/null 2>&1
+  if [[ ! -d "$root/$branch" ]]; then
+    git -C "$root" worktree add "$root/$branch" "$branch" >/dev/null 2>&1 \
+      || fail CONVERT_FAILED "worktree add failed for $root/$branch"
+  fi
+
+  local manifest="$root/.orca/init-convert-manifest"
+  if [[ ! -f "$manifest" ]]; then
+    fail NO_MANIFEST "journal exists but $manifest does not — inspect by hand"
+  fi
+  move_manifest_entries
+  printf 'MOVED:\t%s\n' "$moved_count"
+
+  verify_conversion
+  trap - INT TERM HUP
+  rm -f "$(journal_path)"
   exit 0
 }
 
@@ -308,5 +427,6 @@ case "${1:-}" in
   check)   cmd_check ;;
   convert) cmd_convert ;;
   cleanup) cmd_cleanup ;;
-  *)       fail BAD_ARGS "usage: init-convert.sh check | convert | cleanup" ;;
+  recover) cmd_recover ;;
+  *)       fail BAD_ARGS "usage: init-convert.sh check | convert | cleanup | recover" ;;
 esac
