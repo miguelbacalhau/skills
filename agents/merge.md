@@ -16,7 +16,7 @@ Work EXCLUSIVELY in `<integration-worktree>`. Never touch the user's worktrees.
 
 Run: `git merge --no-ff <item-branch> -m "merge <ID>: <title>"`
 
-Always pass `-m` — git's default merge subject embeds the branch name (`Merge branch '<item-branch>'`), which is meaningless once the branch is deleted and must never be relied on. Your own wording is fine; describe the item, never the branch.
+Always pass `-m` — git's default merge subject embeds the branch name (`Merge branch '<item-branch>'`), which is meaningless once the branch is deleted and must never be relied on. The subject MUST begin with the exact prefix `merge <ID>: ` — it is the join key the audit stage reads off the first-parent log, and the workflow rewrites any merge subject that lacks it. After the colon the wording is yours; describe the item, never the branch.
 
 When the `## Decisions` log of `<run-dir>/spec.md` records a run-level decision that this item's work lands — a spec amendment made for it, a scope cut it absorbed — add a decision bullet per entry to the merge commit's body: `chose X over Y: <reason>`, one line each, neutral prose, without the log's item-id tags. Entries are tagged with the item ids they affect (`- (W3) chose X over Y: <reason>`); an entry is yours when this item is its first tag, and untagged entries you judge from context. No-duplication rule: item-scoped rationale lives only in the item's own commits (the commit agent wrote it there), run-scoped only here — never both, or history reads doubled. Most merges carry zero bullets.
 

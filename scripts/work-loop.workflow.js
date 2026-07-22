@@ -674,8 +674,10 @@ const buildItem = async item => {
         `git -C "${integrationWt}" log --first-parent --format=%B "${tipBefore}..HEAD"`,
         `merge-check:${item.id}`, 'Merge')
       const [tipAfter, msgs] = post.split('@@SPAN@@').map(s => (s || '').trim())
+      // The rewrite subject keeps the structural `merge <ID>:` prefix —
+      // audit's join key — even on the attribution fallback path.
+      const safe = `merge ${item.id}: ${banned.test(item.title) ? `work item ${item.id}` : item.title}`
       if (tipAfter !== tipBefore && banned.test(msgs)) {
-        const safe = banned.test(item.title) ? `merge work item ${item.id}` : `merge ${item.id}: ${item.title}`
         const belowTip = await shMarked(
           `git -C "${integrationWt}" log --first-parent --skip=1 --format=%B "${tipBefore}..HEAD"`,
           `merge-below-tip:${item.id}`, 'Merge')
@@ -689,6 +691,37 @@ const buildItem = async item => {
           // only the merge topology is given up.
           await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${sq(safe)}'`,
                    `merge-squash:${item.id}`, 'Merge')
+        }
+      }
+      // Structural join-key guarantee: audit finds an item's merge by the
+      // `merge <ID>:` subject prefix on the first-parent log — guaranteed
+      // here by the deterministic layer, never by prompt compliance. Read
+      // the tip fresh (the attribution backstop may just have rewritten it).
+      if (tipAfter !== tipBefore) {
+        const prefix = `merge ${item.id}:`
+        const info = await shMarked(
+          `git -C "${integrationWt}" log -1 --format='%P%x09%s' ; echo "@@MS@@" ; ` +
+          `git -C "${integrationWt}" log --first-parent --merges --format=%s "${tipBefore}..HEAD" | tail -1 ; echo "@@MS_END@@" ; ` +
+          `git -C "${integrationWt}" log -1 --format=%b`,
+          `merge-subject:${item.id}`, 'Merge')
+        const [tipLine, mergeSubjRaw, tipBody] = info.split(/@@MS(?:_END)?@@/).map(s => (s || '').trim())
+        const [tipParents = '', tipSubj = ''] = tipLine.split('\t')
+        const mergeSubj = mergeSubjRaw || tipSubj
+        if (!mergeSubj.startsWith(prefix)) {
+          if (tipParents.includes(' ') && tipSubj === mergeSubj) {
+            // The merge commit is the tip: prepend the prefix, keep the
+            // agent's wording and the body's run-level decision bullets.
+            const bodyArg = tipBody ? ` -m '${sq(tipBody)}'` : ''
+            await sh(`git -C "${integrationWt}" commit --amend -m '${sq(`${prefix} ${mergeSubj}`)}'${bodyArg}`,
+                     `merge-subject-amend:${item.id}`, 'Merge')
+          } else {
+            // The wrong-subject merge sits below later commits — squash the
+            // span behind the guaranteed subject (same trade as the
+            // attribution fallback: content kept, topology given up).
+            await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${sq(safe)}'`,
+                     `merge-subject-squash:${item.id}`, 'Merge')
+          }
+          log(`${item.id}: merge subject rewritten to carry the required "${prefix}" prefix`)
         }
       }
     }
