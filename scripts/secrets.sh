@@ -41,7 +41,7 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1
-#       reasons: BAD_ARGS NOT_GIT OLD_GIT OUTSIDE_ROOT NO_PYTHON3
+#       reasons: BAD_ARGS NOT_GIT OLD_GIT OUTSIDE_ROOT
 #
 # Ownership is by RESOLVED target, never substring: a symlink is ours to
 # manage (repair, replace, or sweep) only when resolving it lands on this
@@ -58,10 +58,9 @@
 
 set -uo pipefail
 
-fail() { # <reason> <detail> — typed failure, exit 1
-  printf 'FAIL:\t%s\t%s\n' "$1" "$2"
-  exit 1
-}
+# fail() and the symlink canonicalizer come from the shared lib.
+# shellcheck source=lib.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 mode="${1:-}"
 [[ ( "$mode" == "place" || "$mode" == "remove" ) && $# -eq 2 ]] \
@@ -113,23 +112,14 @@ else
 fi
 
 # Canonical target of a symlink, existence NOT required (dangling links
-# must still resolve so the sweep can judge them). python3 because realpath
-# -m is not portable to macOS; the plugin already requires python3
-# (config.sh's strict JSON handling).
-command -v python3 >/dev/null 2>&1 \
-  || fail NO_PYTHON3 "python3 not on PATH — required to resolve symlink ownership"
+# must still resolve so the sweep can judge them). The lib's pure-bash
+# canonicalizer resolves the link path itself — its final component is
+# the symlink, so full resolution lands on the canonical target.
 resolve_link() { # <link-path> — canonical absolute target on stdout
-  python3 - "$1" <<'PY'
-import os, sys
-p = sys.argv[1]
-t = os.readlink(p)
-if not os.path.isabs(t):
-    t = os.path.join(os.path.dirname(p), t)
-print(os.path.realpath(t))
-PY
+  canonicalize "$1"
 }
 # The canonical secrets root — the right-hand side of every ownership test.
-secrets_canon="$(python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$secrets_dir")"
+secrets_canon="$(canonicalize "$secrets_dir")"
 
 # Escape glob metacharacters so a repo path containing [ ] * ? \ cannot
 # corrupt find -path patterns.
