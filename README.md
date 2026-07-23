@@ -61,7 +61,6 @@ State lives in files, never in conversation memory: the brief, the spec with its
 | Codex CLI | Required only **when the reviewer is codex** (the default wherever it is installed): the **global `codex` binary on PATH**, version **≥ 0.142.5**, authenticated via `codex login`. **Never install codex via npm** — use `brew install codex` or the official release binaries. With `reviewer=claude`, the codex rows don't apply. |
 | Repository layout | Bare-repo-with-worktrees (`.bare/` + peer worktrees). `/orca:init` sets this up, including converting an existing conventional checkout in place. |
 | git | ≥ 2.31 (`rev-parse --path-format` — every orca script's repository resolution; older gits get a typed `OLD_GIT` failure naming the upgrade, never a misdiagnosis); ≥ 2.42 for `worktree add --orphan` when `/orca:init` creates a brand-new repository. |
-| python3 | On PATH — `config.sh`'s strict JSON handling and `secrets.sh`'s symlink-ownership resolution both use it; both fail typed (`NO_PYTHON3`) without it. |
 | `MCP_TOOL_TIMEOUT` | Codex-only, like the Codex CLI row: set to `1200000` (~20 min) in a Claude Code settings `env` block, so Codex reviews are not killed at the default MCP tool timeout. A plugin cannot ship session env, so `/orca:doctor` writes it for you. |
 | Permission mode | Runs need `bypassPermissions` for the session — see [Permissions and autonomy](#permissions-and-autonomy). |
 
@@ -228,7 +227,7 @@ Optionally — offered, never defaulted — it can write `bypassPermissions` as 
 
 ### `/orca:config [assignments | reset]`
 
-Optional per-repository overrides, written to `.orca/config.json` and applied by the **next** run launch (a run in flight, or a resume of one, keeps its launch-time config): which independent reviewer the work loop uses (top-level `reviewer` key), and which Claude model and reasoning effort each stage agent runs with (`agents` block).
+Optional per-repository overrides, written to `.orca/config` and applied by the **next** run launch (a run in flight, or a resume of one, keeps its launch-time config): which independent reviewer the work loop uses (top-level `reviewer` key), and which Claude model and reasoning effort each stage agent runs with (`agents` block).
 
 ```bash
 /orca:config                                # show the reviewer + effective table
@@ -326,7 +325,7 @@ What a repository looks like mid-run (`/orca:init` creates the top three entries
 ├── orca-bug-<slug>-H1/           # debug: one throwaway worktree per hypothesis, removed after its verdict
 ├── orca-fix-<slug>/              # debug: fix integration worktree (branch fix/<slug>)
 └── .orca/
-    ├── config.json                    # optional per-repo reviewer & model/effort overrides
+    ├── config                         # optional per-repo reviewer & model/effort overrides
     ├── map.md                         # machine-local codebase map (cache; see Project context)
     ├── decisions.md                   # machine-local decision log (cache; see Project context)
     ├── secrets/                       # worktree secrets — a mirror tree linked into every run worktree (see below)
@@ -444,18 +443,14 @@ Override any of these per repository with [`/orca:config`](#orcaconfig-assignmen
 
 ## Configuration
 
-**`.orca/config.json`** (repo root, written by `/orca:config`) — the reviewer choice and per-stage model/effort overrides, applied at the next run launch, plus the `/orca:review` keys, read fresh on each invocation:
+**`.orca/config`** (repo root, written by `/orca:config`) — the reviewer choice and per-stage model/effort overrides, applied at the next run launch, plus the `/orca:review` keys, read fresh on each invocation. Flat dotted `key=value`, a closed lowercase-token vocabulary (a legacy `.orca/config.json` is no longer read — the pre-flight emits a `CONFIG: OBSOLETE:` signpost while one lingers, and `/orca:config` offers to delete it):
 
-```json
-{
-  "reviewer": "claude",
-  "editor": "nvim",
-  "terminal": "tmux",
-  "agents": {
-    "plan": { "effort": "high" },
-    "implement": { "model": "opus" }
-  }
-}
+```
+reviewer=claude
+editor=nvim
+terminal=tmux
+agents.plan.effort=high
+agents.implement.model=opus
 ```
 
 A present `reviewer` key **pins** the choice; an absent key means each launch **detects** (codex on PATH at the minimum version → codex, else claude). `editor` (`nvim`|`vscode`|`none`) and `terminal` (`tmux`|`none`) carry the identical contract for `/orca:review` — absent detects (orca.nvim probe first, then orca.vscode's; `$TMUX`), a pin turns a missing dependency into a loud failure, `none` opts out to a printed command. They are machine preferences in a repo file — a deliberate trade: `.orca/` sits outside every worktree (effectively personal), detection means most users never set them, and one config surface beats a user-level layer for two keys. The `agents` overrides sit on top of the agent defaults. One block serves both verbs — the feature stages and the debug stages (`reproduce`, `hypothesize`, `verify`, `diagnose`) live side by side, and each run applies its own verb's keys while validating and ignoring the other's.
@@ -490,7 +485,7 @@ The tradeoff is real and `/orca:feature` states it before starting: bypass mode 
 
 Recovery is a three-surface split, one per honest end state, and **recovery never creates a run — only new intent does**: an *interrupted* run (no `report.md` yet) resumes from its journal via its verb's triage; a *finished run with unmet items* is finished inside the same run by `/orca:retry`; a *finished run's optional follow-ups* become a new brief via `/orca:followup`. `/orca:status` is where "where was I?" gets answered before choosing: a strictly read-only dashboard that joins the `.orca/` state with git ground truth (unmerged deliverables, kept item branches, leftover `orca-*` worktrees, orphans) and names the owning skill per state — it prescribes cleanup commands where deletion is provably safe, but never runs them.
 
-Every agent call in the work loop is journaled, and the workflow `runId` is persisted the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation. Feature runs persist it to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time reviewer as `**Workflow reviewer:**` and the launch-time `agents` block when one was passed); debug runs persist `**Workflow run:**` plus the full launch args as `**Workflow args:**` to the open case's `case.md`. A resume replays those recorded values, never the current `.orca/config.json`.
+Every agent call in the work loop is journaled, and the workflow `runId` is persisted the moment the workflow launches — precisely because the interruption that needs it, session death, also erases the conversation. Feature runs persist it to the end of `spec.md` (as `**Workflow run:** <runId>`, alongside the launch-time reviewer as `**Workflow reviewer:**` and the launch-time `agents` block when one was passed); debug runs persist `**Workflow run:**` plus the full launch args as `**Workflow args:**` to the open case's `case.md`. A resume replays those recorded values, never the current `.orca/config`.
 
 - **Interrupted run** (session death, kill, harness restart): invoke the same verb — `/orca:feature` triage discovers the interrupted run on disk via `spec.md`; `/orca:debug` triage finds it through its open case — and it offers the resume, re-invoking the workflow with the same script and args plus `resumeFromRunId`. Completed agent calls replay instantly from the journal; only in-flight and remaining work runs live. Never re-run stages conversationally.
 - **Blocked items** keep their branch deliberately, with whatever was in the worktree salvaged as a `wip:` commit and the worktree removed — the report lists them for `/orca:retry`, which resolves the recorded decisions with you and relaunches only the unmet items in the same run, resuming those branches.
@@ -507,7 +502,7 @@ Every agent call in the work loop is journaled, and the workflow `runId` is pers
 | `CODEX: FAIL: not authenticated` | Run `codex login` (interactive; your action, not the agent's). Verify with `codex login status`. `/orca:doctor` guides and re-checks. |
 | `CODEX: FAIL: MCP_TOOL_TIMEOUT not set` | Run `/orca:doctor` to write it into a settings env block, then start a fresh session. |
 | Run used the Claude reviewer unexpectedly | The reviewer key is absent and codex wasn't detected — missing or below the minimum version. Fix codex via `/orca:doctor`, or pin `reviewer=codex` via `/orca:config` so a broken codex fails the pre-flight loudly instead. |
-| `REVIEWER: FAIL: invalid reviewer` | The `reviewer` key in `.orca/config.json` is not `codex`/`claude` (or appears twice). Fix it with `/orca:config` — the pre-flight never guesses. |
+| `REVIEWER: FAIL: invalid reviewer` | The `reviewer` key in `.orca/config` is not `codex`/`claude` (or appears twice). Fix it with `/orca:config` — the pre-flight never guesses. |
 | `/orca:feature` says the codex MCP tool doesn't resolve | Two causes. If the project has any MCP config of its own (a `.mcp.json` at the repo root, or local-scope servers — `claude mcp list` shows both), a Claude Code bug (as of 2.1.202) loads none of the plugin's bundled MCP servers: remove the redundant registration, or pin `reviewer=claude` if the project's own servers must stay. Otherwise check the plugin is installed and enabled — MCP servers load at session start, so the session may simply predate the install or enablement. Either way, start a fresh session in the project. |
 | `/orca:feature` says the harness has no Workflow tool | The work loop needs a Claude Code harness with workflows; there is no conversational fallback. |
 | Run pauses on a permission prompt | The session wasn't in `bypassPermissions` mode. Enable it (Shift+Tab) and re-invoke the verb — triage offers the resume from the journal — rather than restarting the run. |
@@ -534,7 +529,7 @@ This repository previously shipped the same workflow as symlink-installed skills
 | `skills/feature/`, `skills/debug/`, `skills/review/`, `skills/retry/`, `skills/followup/`, `skills/status/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The nine skills. |
 | `skills/feature/interview.md`, `skills/debug/interview.md` | The interview instructions, loaded only when a verb's triage lands on a new interview. |
 | `scripts/preflight.sh` | Read-only environment validation — the gate lines above. |
-| `scripts/config.sh` | Sole reader/writer of `.orca/config.json` — parse, validation, merge semantics, atomic canonical writes; the grep-readers in `preflight.sh` and `review.sh` lean on its sole-writer guarantee. |
+| `scripts/config.sh` | Sole reader/writer of `.orca/config` — parse, validation, merge semantics, atomic canonical writes (over `lib.sh`'s shared machinery); the grep-readers in `preflight.sh` and `review.sh` lean on its sole-writer guarantee. |
 | `scripts/triage.sh` | Read-only discovery spine — interrupted/unlaunched runs with byte-exact resume handles, queued briefs, open cases (`discover`), and the git-footprint join for `/orca:status` (`status`). |
 | `scripts/init-convert.sh` | The mechanical core of `/orca:init`'s conventional-to-bare conversion — gates, NUL-safe untracked moves, crash journal with signal traps, `recover`, and the manifest-checked `cleanup`. |
 | `scripts/review.sh` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |

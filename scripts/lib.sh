@@ -129,6 +129,172 @@ canonicalize() { # <path> -> canonical absolute path on stdout
   printf '%s\n' "${result:-/}"
 }
 
+# ---- config: vocabulary, parser, canonical writer ---------------------
+# The config file is <repo-root>/.orca/config — flat dotted key=value,
+# a closed lowercase-token vocabulary:
+#
+#   reviewer=codex
+#   editor=nvim
+#   agents.plan.model=sonnet
+#   agents.review.effort=high
+#
+# Grammar: a line is blank, a # comment, or matches
+# ^[a-z][a-z.]*=[a-z]+$ — anything else is PARSE_ERROR; a key outside
+# the vocabulary is UNKNOWN_KEY; a key seen twice is DUPLICATE_KEY. The
+# grammar cannot express an invalid shape: no quoting, no escaping, no
+# type confusion, and each line validates independently.
+#
+# One shared validation vocabulary kept in lockstep across four code
+# validators: this file (config.sh's parse and the run skills' launch
+# validation via its validate subcommand), work-loop.workflow.js,
+# debug-loop.workflow.js, and — MODELS/EFFORTS only — spec.workflow.js.
+# The workflow scripts run sandboxed with no filesystem access, so they
+# carry their own literal copies; a value accepted here but rejected
+# there bricks that verb's launches until the config file is
+# hand-edited. CI's lockstep-check.py fails when the lists drift.
+ORCA_STAGES="spec plan implement review fix commit merge integrate reproduce hypothesize verify diagnose"
+ORCA_MODELS="haiku sonnet opus fable"
+ORCA_EFFORTS="low medium high xhigh max"
+ORCA_REVIEWERS="codex claude"
+ORCA_EDITORS="nvim vscode none"
+ORCA_TERMINALS="tmux none"
+
+in_list() { # <value> <space-separated-list>
+  case " $2 " in
+    *" $1 "*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+commas() { # <words...> — "a, b, c" for error details
+  printf '%s' "$*" | sed 's/ /, /g'
+}
+
+# config_allowed_values <key> — the key's allowed-values list on
+# stdout; return 1 when the key is not in the vocabulary.
+config_allowed_values() {
+  local stage
+  case "$1" in
+    reviewer) printf '%s' "$ORCA_REVIEWERS" ;;
+    editor)   printf '%s' "$ORCA_EDITORS" ;;
+    terminal) printf '%s' "$ORCA_TERMINALS" ;;
+    agents.*.model)
+      stage="${1#agents.}"; stage="${stage%.model}"
+      case "$stage" in *.*) return 1 ;; esac
+      in_list "$stage" "$ORCA_STAGES" || return 1
+      printf '%s' "$ORCA_MODELS" ;;
+    agents.*.effort)
+      stage="${1#agents.}"; stage="${stage%.effort}"
+      case "$stage" in *.*) return 1 ;; esac
+      in_list "$stage" "$ORCA_STAGES" || return 1
+      printf '%s' "$ORCA_EFFORTS" ;;
+    *) return 1 ;;
+  esac
+}
+
+# config_fail_reason <key> — the typed reason a bad VALUE under this
+# (known-valid) key fails with.
+config_fail_reason() {
+  case "$1" in
+    reviewer) printf 'UNKNOWN_REVIEWER' ;;
+    editor)   printf 'UNKNOWN_EDITOR' ;;
+    terminal) printf 'UNKNOWN_TERMINAL' ;;
+    *.model)  printf 'UNKNOWN_MODEL' ;;
+    *)        printf 'UNKNOWN_EFFORT' ;;
+  esac
+}
+
+# config_parse <file> — strict parse. On success: the file's key=value
+# lines on stdout (file order), exit 0. On any error: one typed
+# FAIL:<TAB><reason><TAB><detail> line per problem on stdout — ALL of
+# them — and exit 1, valid lines suppressed. A missing file is an empty
+# valid config.
+config_parse() {
+  local file="$1" line key value allowed reason out="" errs="" seen=" "
+  if [ ! -f "$file" ]; then return 0; fi
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in
+      ''|'#'*) continue ;;
+    esac
+    if ! [[ $line =~ ^[a-z][a-z.]*=[a-z]+$ ]]; then
+      errs="$errs$(printf 'FAIL:\t%s\t%s' PARSE_ERROR "invalid line in $file: \"$line\" — a line is blank, a # comment, or lowercase key=value; fix by hand or config.sh reset")
+"
+      continue
+    fi
+    key="${line%%=*}"
+    value="${line#*=}"
+    if ! allowed="$(config_allowed_values "$key")"; then
+      errs="$errs$(printf 'FAIL:\t%s\t%s' UNKNOWN_KEY "$key in $file — keys are reviewer, editor, terminal, agents.<stage>.<model|effort>; stages are $(commas "$ORCA_STAGES")")
+"
+      continue
+    fi
+    if in_list "$key" "$seen"; then
+      errs="$errs$(printf 'FAIL:\t%s\t%s' DUPLICATE_KEY "duplicate key \"$key\" in $file — fix by hand or config.sh reset")
+"
+      continue
+    fi
+    seen="$seen$key "
+    if ! in_list "$value" "$allowed"; then
+      reason="$(config_fail_reason "$key")"
+      errs="$errs$(printf 'FAIL:\t%s\t%s' "$reason" "$key=$value — allowed values: $(commas "$allowed")")
+"
+      continue
+    fi
+    out="$out$line
+"
+  done <"$file"
+  if [ -n "$errs" ]; then
+    printf '%s' "$errs"
+    return 1
+  fi
+  printf '%s' "$out"
+}
+
+# config_lookup <cfg-lines> <key> — the key's value on stdout, empty
+# when absent.
+config_lookup() {
+  printf '%s\n' "$1" | awk -F= -v k="$2" '$1 == k { print $2; exit }'
+}
+
+# config_write <file> — canonical write of the key=value lines on
+# stdin: fixed order (reviewer, editor, terminal, then stages in
+# vocabulary order, model before effort), atomic (temp file + rename,
+# so a concurrent grep-reader never observes a truncated file), and a
+# file that would be empty is deleted instead. Emits WROTE:/DELETED:.
+config_write() {
+  local file="$1" cfg out="" k s f v dir tmp
+  cfg="$(cat)"
+  for k in reviewer editor terminal; do
+    v="$(config_lookup "$cfg" "$k")"
+    [ -n "$v" ] && out="$out$k=$v
+"
+  done
+  for s in $ORCA_STAGES; do
+    for f in model effort; do
+      v="$(config_lookup "$cfg" "agents.$s.$f")"
+      [ -n "$v" ] && out="${out}agents.$s.$f=$v
+"
+    done
+  done
+  if [ -z "$out" ]; then
+    if [ -e "$file" ]; then
+      rm -f "$file"
+      printf 'DELETED:\t%s\n' "$file"
+    fi
+    return 0
+  fi
+  dir="$(dirname "$file")"
+  mkdir -p "$dir"
+  if ! tmp="$(mktemp "$dir/.config.XXXXXX" 2>/dev/null)"; then
+    fail WRITE_ERROR "could not create a temp file beside $file"
+  fi
+  if ! printf '%s' "$out" >"$tmp" 2>/dev/null || ! mv -f "$tmp" "$file" 2>/dev/null; then
+    rm -f "$tmp" 2>/dev/null
+    fail WRITE_ERROR "could not write $file"
+  fi
+  printf 'WROTE:\t%s\n' "$file"
+}
+
 # ---- banned-attribution check -----------------------------------------
 # The one holder of the regex (work-loop's JS copy is deleted in the
 # verb switchover): unambiguous attribution markers only — "ai",

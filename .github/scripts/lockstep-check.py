@@ -1,18 +1,25 @@
 #!/usr/bin/env python3
-"""Lockstep check for the contract vocabulary duplicated across the three
-config validators: scripts/config.sh (the sole writer), and the two
-sandboxed workflow scripts that carry literal copies because they cannot
-read files (scripts/work-loop.workflow.js, scripts/debug-loop.workflow.js).
-A value accepted by one validator but rejected by another bricks launches
-until the config file is hand-edited — so CI fails when the lists drift.
+"""Lockstep check for the contract vocabulary duplicated across the
+config validators: scripts/lib.sh (the sole write path, used by
+config.sh), and the sandboxed workflow scripts that carry literal
+copies because they cannot read files (scripts/work-loop.workflow.js,
+scripts/debug-loop.workflow.js, and — MODELS/EFFORTS only —
+scripts/spec.workflow.js, which validates the spec spawn's overrides
+at launch). A value accepted by one validator but rejected by another
+bricks launches until the config file is hand-edited — so CI fails
+when the lists drift.
 """
 import re
 import sys
 
+# file label -> (path, keys checked there)
+ALL = ('STAGES', 'MODELS', 'EFFORTS')
+MODELS_ONLY = ('MODELS', 'EFFORTS')
 FILES = {
-    'config.sh': 'scripts/config.sh',
-    'work-loop': 'scripts/work-loop.workflow.js',
-    'debug-loop': 'scripts/debug-loop.workflow.js',
+    'lib.sh': ('scripts/lib.sh', ALL),
+    'work-loop': ('scripts/work-loop.workflow.js', ALL),
+    'debug-loop': ('scripts/debug-loop.workflow.js', ALL),
+    'spec': ('scripts/spec.workflow.js', MODELS_ONLY),
 }
 
 
@@ -28,49 +35,53 @@ def list_literal(src, name, path):
     return m.group(1)
 
 
-def js_vocab(path):
+def js_vocab(path, keys):
     src = open(path).read()
-    stages_blob = list_literal(src, 'const STAGES', path)
-    # resolve one level of ...SPREAD against its own const list
-    for spread in re.findall(r"\.\.\.([A-Z_]+)", stages_blob):
-        stages_blob = stages_blob.replace(
-            f"...{spread}", list_literal(src, f"const {spread}", path))
-    return {
-        'STAGES': strings_of(stages_blob),
-        'MODELS': strings_of(list_literal(src, 'const MODELS', path)),
-        'EFFORTS': strings_of(list_literal(src, 'const EFFORTS', path)),
-    }
+    vocab = {}
+    if 'STAGES' in keys:
+        stages_blob = list_literal(src, 'const STAGES', path)
+        # resolve one level of ...SPREAD against its own const list
+        for spread in re.findall(r"\.\.\.([A-Z_]+)", stages_blob):
+            stages_blob = stages_blob.replace(
+                f"...{spread}", list_literal(src, f"const {spread}", path))
+        vocab['STAGES'] = strings_of(stages_blob)
+    for key in ('MODELS', 'EFFORTS'):
+        if key in keys:
+            vocab[key] = strings_of(list_literal(src, f'const {key}', path))
+    return vocab
 
 
-def sh_vocab(path):
+def sh_vocab(path, keys):
+    """lib.sh's lists are space-separated double-quoted bash strings:
+    ORCA_STAGES="spec plan ..."."""
     src = open(path).read()
-    return {
-        'STAGES': strings_of(list_literal(src, 'STAGES', path)),
-        'MODELS': strings_of(list_literal(src, 'MODELS', path)),
-        'EFFORTS': strings_of(list_literal(src, 'EFFORTS', path)),
-    }
+    vocab = {}
+    for key in keys:
+        m = re.search(f'ORCA_{key}="([a-z ]+)"', src)
+        if not m:
+            sys.exit(f"lockstep: no ORCA_{key} list found in {path}")
+        vocab[key] = m.group(1).split()
+    return vocab
 
 
-vocabs = {
-    'config.sh': sh_vocab(FILES['config.sh']),
-    'work-loop': js_vocab(FILES['work-loop']),
-    'debug-loop': js_vocab(FILES['debug-loop']),
-}
+vocabs = {}
+for name, (path, keys) in FILES.items():
+    reader = sh_vocab if path.endswith('.sh') else js_vocab
+    vocabs[name] = reader(path, keys)
 
 ok = True
-for key in ('STAGES', 'MODELS', 'EFFORTS'):
+for key in ALL:
     # order differs legitimately (each script lists its own tunables first);
     # the contract is the SET of accepted values
-    sets = {name: sorted(v[key]) for name, v in vocabs.items()}
+    sets = {name: sorted(v[key]) for name, v in vocabs.items() if key in v}
     if len({tuple(s) for s in sets.values()}) != 1:
         ok = False
-        print(f"lockstep: {key} drifted across the three validators:")
+        print(f"lockstep: {key} drifted across the validators:")
         for name, values in sets.items():
             print(f"  {name}: {values}")
 
 if not ok:
     sys.exit(1)
 for name, v in vocabs.items():
-    print(f"lockstep: {name}: "
-          f"{len(v['STAGES'])} stages, {len(v['MODELS'])} models, "
-          f"{len(v['EFFORTS'])} efforts — in lockstep")
+    counts = ", ".join(f"{len(v[k])} {k.lower()}" for k in ALL if k in v)
+    print(f"lockstep: {name}: {counts} — in lockstep")

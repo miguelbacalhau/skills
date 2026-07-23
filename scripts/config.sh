@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 #
-# orca config — the sole reader/writer of <repo-root>/.orca/config.json.
+# orca config — the sole reader/writer of <repo-root>/.orca/config.
 # The orca:config skill stays the conversational shell (presentation,
-# advice, failure translation); this script owns the parse, the validation,
-# the merge/removal semantics, and the canonical write. preflight.sh and
-# review.sh read the file with grep, justified by the guarantee that lives
-# HERE: this script is the only writer, and it only ever writes the
-# canonical shape below.
+# advice, failure translation); this script owns the parse, the
+# validation, the merge/removal semantics, and the canonical write.
+# preflight.sh and review.sh read the file with grep, justified by the
+# guarantee that lives HERE (via lib.sh): this script is the only
+# writer, and it only ever writes the canonical shape below.
+#
+# The file is flat dotted key=value (see lib.sh's config section for
+# the grammar); the legacy .orca/config.json is no longer read by
+# anything — preflight.sh emits an informational CONFIG: OBSOLETE line
+# while one exists, and orca:config offers to delete it.
 #
 # Usage:
 #   config.sh show
@@ -35,6 +40,11 @@
 #       skills hold for the Workflow args. editor/terminal are validated but
 #       excluded — they are orca:review preferences, not launch args. An
 #       absent file is a valid state: VALID:<TAB>{}
+#       (The one place JSON survives the format migration: the launch
+#       skills pass this object straight into Workflow args, and the
+#       workflow scripts validate that shape at launch. Emitting JSON for
+#       a closed lowercase-token vocabulary is a printf with no escaping
+#       concerns; parsing was the hard part, and parsing is flat-file.)
 #
 #   set / clear / reset (write): the resulting state as show emits it
 #   (DEFAULT lines included), plus
@@ -50,18 +60,17 @@
 #
 #   any subcommand:
 #     FAIL:<TAB><reason><TAB><detail>    exit 1, nothing written
-#       reasons: NOT_GIT OLD_GIT NO_PYTHON3 BAD_ARGS PARSE_ERROR DUPLICATE_KEY
-#                BAD_SHAPE UNKNOWN_KEY UNKNOWN_STAGE UNKNOWN_MODEL
-#                UNKNOWN_EFFORT UNKNOWN_REVIEWER UNKNOWN_EDITOR
-#                UNKNOWN_TERMINAL
+#       reasons: NOT_GIT OLD_GIT BAD_ARGS PARSE_ERROR DUPLICATE_KEY
+#                UNKNOWN_KEY UNKNOWN_STAGE UNKNOWN_MODEL UNKNOWN_EFFORT
+#                UNKNOWN_REVIEWER UNKNOWN_EDITOR UNKNOWN_TERMINAL
+#                WRITE_ERROR
 #
 # Canonical write shape — the contract the grep-readers in preflight.sh and
 # review.sh assume (they stay grep-only BECAUSE this script is the sole
-# writer): one line, compact separators, trailing newline, fixed key order
-# (reviewer, editor, terminal, agents; stages in vocabulary order; model
-# before effort), no empty stage objects, no empty agents block, cleared
-# keys removed entirely (never null or "default"), and a file that would be
-# {} is deleted instead.
+# writer): one key=value per line, fixed order (reviewer, editor, terminal,
+# then stages in vocabulary order, model before effort), cleared keys
+# removed entirely (never "default"), and a file that would be empty is
+# deleted instead.
 #
 # Works in both layouts: the bare-with-worktrees layout orca:init creates
 # (.orca/ sits beside the bare repo, outside every worktree) and a
@@ -72,34 +81,35 @@
 
 set -uo pipefail
 
-fail() { # <reason> <detail> — typed failure, exit 1, nothing written
-  printf 'FAIL:\t%s\t%s\n' "$1" "$2"
-  exit 1
-}
+# fail(), the vocabulary tables, and the config parser/writer come from
+# the shared lib.
+# shellcheck source=lib.sh disable=SC1091
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 agents_dir="$script_dir/../agents"
 
-command -v python3 >/dev/null 2>&1 \
-  || fail NO_PYTHON3 "python3 not on PATH — required for strict JSON handling"
+# Reject-all-or-write-nothing needs every bad assignment reported, not
+# just the first — errors accumulate here and bail together.
+errors=""
+err() { # <reason> <detail>
+  errors="$errors$(printf 'FAIL:\t%s\t%s' "$1" "$2")
+"
+}
+bail_if_errors() {
+  [ -z "$errors" ] && return 0
+  printf '%s' "$errors"
+  exit 1
+}
 
-# Resolve repo root in either layout: the parent of the git common dir is the
-# directory that holds (or will hold) .orca/. No bare-layout requirement —
-# the config is legitimate in a repo orca:init has not converted yet.
-resolve_repo() {
-  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
-  # An empty result can mean old git, not no-git: --path-format needs
-  # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
-  # wrong problem.
-  if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
-  fi
-  if [[ -z "$common_dir" ]]; then
-    fail NOT_GIT "not inside a git repository — the config is per-repository"
-  fi
-  is_bare="$(git --git-dir="$common_dir" rev-parse --is-bare-repository 2>/dev/null || true)"
-  repo_root="$(dirname "$common_dir")"
-  config_file="$repo_root/.orca/config.json"
+# Resolve repo root in either layout: the parent of the git common dir is
+# the directory that holds (or will hold) .orca/. No bare-layout
+# requirement — the config is legitimate in a repo orca:init has not
+# converted yet.
+resolve_config_repo() {
+  resolve_repo   # sets common_dir, repo_root, is_bare; NOT_GIT/OLD_GIT typed
+  # shellcheck disable=SC2154  # repo_root is resolve_repo's
+  config_file="$repo_root/.orca/config"
 }
 
 # Stage defaults from the plugin's own agent definitions — read fresh, never
@@ -119,301 +129,130 @@ emit_defaults() {
 # worktree): make sure the per-clone ignore file excludes .orca/. Idempotent,
 # and only once .orca/ actually exists.
 ensure_exclude() {
+  # shellcheck disable=SC2154  # is_bare/common_dir are resolve_repo's
   [[ "$is_bare" == "true" ]] && return 0
   [[ -e "$repo_root/.orca" ]] || return 0
+  # shellcheck disable=SC2154  # common_dir is resolve_repo's
   local exclude="$common_dir/info/exclude"
   mkdir -p "$common_dir/info"
   grep -qxF '.orca/' "$exclude" 2>/dev/null || printf '.orca/\n' >>"$exclude"
 }
 
-# All JSON handling — strict parse, validation, merge, canonical write —
-# lives in python3 (present on every target platform; jq is not guaranteed).
-py() {
-  python3 - "$@" <<'PY'
-import json, os, sys, tempfile
+# Load the config file; on any file error print ALL its typed FAILs and
+# exit 1. Sets cfg (validated key=value lines).
+load_config() {
+  if ! cfg="$(config_parse "$config_file")"; then
+    printf '%s\n' "$cfg"
+    exit 1
+  fi
+}
 
-# One shared validation vocabulary kept in lockstep across three code
-# validators: this script, work-loop.workflow.js, and debug-loop.workflow.js
-# — plus a fourth holder of MODELS/EFFORTS: spec.workflow.js, which validates
-# the spec spawn's model/effort overrides at launch.
-# The workflow scripts run sandboxed with no filesystem access, so they carry
-# their own literal copies — a value accepted here but rejected there bricks
-# that verb's launches until the config file is hand-edited.
-STAGES = ['spec', 'plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integrate',
-          'reproduce', 'hypothesize', 'verify', 'diagnose']
-MODELS = ['haiku', 'sonnet', 'opus', 'fable']
-EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max']
-TOP_VALUES = {'reviewer': ['codex', 'claude'],
-              'editor': ['nvim', 'vscode', 'none'],
-              'terminal': ['tmux', 'none']}
-TOP_FAIL = {'reviewer': 'UNKNOWN_REVIEWER', 'editor': 'UNKNOWN_EDITOR', 'terminal': 'UNKNOWN_TERMINAL'}
+# The state lines shared by show and every write: REVIEWER/EDITOR/TERMINAL
+# plus one OVERRIDE per set stage field, stages in vocabulary order.
+emit_state() { # <cfg-lines>
+  local cfg="$1" v s f
+  v="$(config_lookup "$cfg" reviewer)"
+  if [ -n "$v" ]; then printf 'REVIEWER:\t%s\tpinned\n' "$v"; else printf 'REVIEWER:\tabsent\n'; fi
+  printf 'EDITOR:\t%s\n' "$(config_lookup "$cfg" editor | grep . || echo absent)"
+  printf 'TERMINAL:\t%s\n' "$(config_lookup "$cfg" terminal | grep . || echo absent)"
+  for s in $ORCA_STAGES; do
+    for f in model effort; do
+      v="$(config_lookup "$cfg" "agents.$s.$f")"
+      [ -n "$v" ] && printf 'OVERRIDE:\t%s\t%s\t%s\n' "$s" "$f" "$v"
+    done
+  done
+  return 0
+}
 
-errors = []
-def err(reason, detail):
-    errors.append((reason, detail))
+# The validate wire format: the canonical launch block as compact JSON —
+# byte-compatible with the historical emitter (reviewer first, then the
+# agents block, stages in vocabulary order, model before effort).
+launch_json() { # <cfg-lines>
+  local cfg="$1" out="" agents="" sobj s f v
+  v="$(config_lookup "$cfg" reviewer)"
+  [ -n "$v" ] && out="\"reviewer\":\"$v\""
+  for s in $ORCA_STAGES; do
+    sobj=""
+    for f in model effort; do
+      v="$(config_lookup "$cfg" "agents.$s.$f")"
+      [ -n "$v" ] && sobj="$sobj${sobj:+,}\"$f\":\"$v\""
+    done
+    [ -n "$sobj" ] && agents="$agents${agents:+,}\"$s\":{$sobj}"
+  done
+  [ -n "$agents" ] && out="$out${out:+,}\"agents\":{$agents}"
+  printf '{%s}' "$out"
+}
 
-def bail_if_errors():
-    if errors:
-        for reason, detail in errors:
-            print(f'FAIL:\t{reason}\t{detail}')
-        sys.exit(1)
+# parse_field <token> — sets ckey to the token's canonical file key
+# (reviewer | editor | terminal | agents.<stage>.<model|effort>); on a
+# bad field, records the typed error and returns 1. Sets a variable
+# rather than printing: run in a command substitution, err()'s
+# accumulation would be lost in the subshell. The CLI spelling stays
+# <stage>.model — the file's agents. prefix is this mapping's job.
+parse_field() {
+  local tok="$1" stage field
+  ckey=""
+  case "$tok" in
+    reviewer|editor|terminal) ckey="$tok"; return 0 ;;
+    *.*)
+      stage="${tok%%.*}"
+      field="${tok#*.}"
+      if ! in_list "$stage" "$ORCA_STAGES"; then
+        err UNKNOWN_STAGE "$tok — stages are $(commas "$ORCA_STAGES")"
+        return 1
+      fi
+      case "$field" in
+        model|effort) ckey="agents.$stage.$field"; return 0 ;;
+        *) err UNKNOWN_KEY "$tok — a stage takes model or effort"; return 1 ;;
+      esac ;;
+    *)
+      err UNKNOWN_KEY "$tok — settable fields are <stage>.model, <stage>.effort, reviewer, editor, terminal"
+      return 1 ;;
+  esac
+}
 
-def no_dupes(pairs):
-    d = {}
-    for k, v in pairs:
-        if k in d:
-            raise ValueError(f'duplicate key "{k}"')
-        d[k] = v
-    return d
+# Ops are "set <key> <value>" / "clear <key>" lines accumulated by the
+# subcommands and applied in order (a later op on the same key wins).
+ops=""
+add_op() { # set <key> <value> | clear <key>
+  ops="$ops$*
+"
+}
+apply_ops() { # <cfg-lines> — the merged cfg lines on stdout
+  local cfg="$1" op verb key value
+  while IFS= read -r op; do
+    [ -n "$op" ] || continue
+    verb="${op%% *}"
+    if [ "$verb" = "set" ]; then
+      key="$(printf '%s' "$op" | cut -d' ' -f2)"
+      value="$(printf '%s' "$op" | cut -d' ' -f3)"
+      cfg="$(printf '%s\n' "$cfg" | awk -F= -v k="$key" '$1 != k')
+$key=$value"
+    else
+      key="${op#clear }"
+      cfg="$(printf '%s\n' "$cfg" | awk -F= -v k="$key" '$1 != k')"
+    fi
+  done <<EOF
+$ops
+EOF
+  printf '%s' "$cfg"
+}
 
-def load(path):
-    if not os.path.exists(path):
-        return {}
-    try:
-        with open(path) as f:
-            cfg = json.load(f, object_pairs_hook=no_dupes)
-    except ValueError as e:
-        if 'duplicate key' in str(e):
-            err('DUPLICATE_KEY', f'{e} in {path} — fix by hand or config.sh reset')
-        else:
-            err('PARSE_ERROR', f'{path} is not valid JSON ({e}) — fix by hand or config.sh reset')
-        return None
-    if not isinstance(cfg, dict):
-        err('PARSE_ERROR', f'{path} must hold a JSON object, got {type(cfg).__name__}')
-        return None
-    return cfg
-
-def validate_cfg(cfg):
-    for k, v in cfg.items():
-        if k == 'agents':
-            if not isinstance(v, dict):
-                err('BAD_SHAPE', f'agents must be an object keyed by stage, got {json.dumps(v)}')
-                continue
-            for stage, sc in v.items():
-                if stage not in STAGES:
-                    err('UNKNOWN_STAGE', f'agents.{stage} — stages are {", ".join(STAGES)}')
-                    continue
-                if not isinstance(sc, dict):
-                    err('BAD_SHAPE', f'agents.{stage} must be an object with model/effort, got {json.dumps(sc)}')
-                    continue
-                for f, val in sc.items():
-                    if f == 'model':
-                        if val not in MODELS:
-                            err('UNKNOWN_MODEL', f'agents.{stage}.model={json.dumps(val)} — models are {", ".join(MODELS)}')
-                    elif f == 'effort':
-                        if val not in EFFORTS:
-                            err('UNKNOWN_EFFORT', f'agents.{stage}.effort={json.dumps(val)} — efforts are {", ".join(EFFORTS)}')
-                    else:
-                        err('UNKNOWN_KEY', f'agents.{stage}.{f} — a stage takes only model and effort')
-        elif k in TOP_VALUES:
-            if v not in TOP_VALUES[k]:
-                err(TOP_FAIL[k], f'{k}={json.dumps(v)} — allowed values: {", ".join(TOP_VALUES[k])}')
-        else:
-            err('UNKNOWN_KEY', f'{k} — top-level keys are reviewer, editor, terminal, agents')
-
-# Canonical shape: fixed key order, stages in vocabulary order, model before
-# effort, empties dropped. Only ever called on a cfg that passed validate_cfg,
-# so it can never silently drop an unknown key.
-def canonical(cfg):
-    out = {}
-    for k in ['reviewer', 'editor', 'terminal']:
-        if k in cfg:
-            out[k] = cfg[k]
-    ag = cfg.get('agents') or {}
-    stages = {}
-    for s in STAGES:
-        sc_in = ag.get(s) or {}
-        sc = {f: sc_in[f] for f in ['model', 'effort'] if f in sc_in}
-        if sc:
-            stages[s] = sc
-    if stages:
-        out['agents'] = stages
-    return out
-
-def compact(obj):
-    return json.dumps(obj, separators=(',', ':'))
-
-def emit_state(cfg):
-    if 'reviewer' in cfg:
-        print(f'REVIEWER:\t{cfg["reviewer"]}\tpinned')
-    else:
-        print('REVIEWER:\tabsent')
-    for k in ['editor', 'terminal']:
-        print(f'{k.upper()}:\t{cfg.get(k, "absent")}')
-    ag = cfg.get('agents') or {}
-    for s in STAGES:
-        sc = ag.get(s) or {}
-        for f in ['model', 'effort']:
-            if f in sc:
-                print(f'OVERRIDE:\t{s}\t{f}\t{sc[f]}')
-
-def write_result(path, cfg):
-    can = canonical(cfg)
-    emit_state(can)
-    if not can:
-        if os.path.exists(path):
-            os.remove(path)
-            print(f'DELETED:\t{path}')
-        return
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    # Atomic: temp file + rename, so a concurrent preflight/review grep can
-    # never observe a truncated file.
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix='.config.json.')
-    try:
-        with os.fdopen(fd, 'w') as f:
-            f.write(compact(can) + '\n')
-        os.replace(tmp, path)
-    except BaseException:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        raise
-    print(f'WROTE:\t{path}')
-
-# ('top', key) or ('stage', stage, field); records an error and returns None
-# on anything else.
-def parse_field(tok):
-    if '.' in tok:
-        stage, _, field = tok.partition('.')
-        if stage not in STAGES:
-            err('UNKNOWN_STAGE', f'{tok} — stages are {", ".join(STAGES)}')
-            return None
-        if field not in ('model', 'effort'):
-            err('UNKNOWN_KEY', f'{tok} — a stage takes model or effort')
-            return None
-        return ('stage', stage, field)
-    if tok in TOP_VALUES:
-        return ('top', tok)
-    err('UNKNOWN_KEY', f'{tok} — settable fields are <stage>.model, <stage>.effort, reviewer, editor, terminal')
-    return None
-
-# Shape guards mirror clear/reset's defensiveness: a hand-mangled file
-# ({"agents":[]}, {"agents":{"plan":3}}) yields a typed FAIL at the next
-# bail, never a Python traceback.
-def apply_ops(cfg, ops):
-    for op in ops:
-        if op[0] == 'set':
-            _, spec, value = op
-            if spec[0] == 'top':
-                cfg[spec[1]] = value
-            else:
-                ag = cfg.setdefault('agents', {})
-                if not isinstance(ag, dict):
-                    err('BAD_SHAPE', f'agents must be an object keyed by stage, got {json.dumps(ag)} — fix by hand or config.sh reset')
-                    return
-                sc = ag.setdefault(spec[1], {})
-                if not isinstance(sc, dict):
-                    err('BAD_SHAPE', f'agents.{spec[1]} must be an object with model/effort, got {json.dumps(sc)} — config.sh reset {spec[1]} clears it')
-                    return
-                sc[spec[2]] = value
-        else:  # clear
-            _, spec = op
-            if spec[0] == 'top':
-                cfg.pop(spec[1], None)
-            else:
-                ag = cfg.get('agents')
-                if isinstance(ag, dict):
-                    sc = ag.get(spec[1])
-                    if isinstance(sc, dict):
-                        sc.pop(spec[2], None)
-
-mode, path = sys.argv[1], sys.argv[2]
-rest = sys.argv[3:]
-
-if mode == 'show':
-    cfg = load(path)
-    bail_if_errors()
-    validate_cfg(cfg)
-    bail_if_errors()
-    emit_state(cfg)
-
-elif mode == 'validate':
-    cfg = load(path)
-    bail_if_errors()
-    validate_cfg(cfg)
-    bail_if_errors()
-    out = {}
-    if 'reviewer' in cfg:
-        out['reviewer'] = cfg['reviewer']
-    can = canonical(cfg)
-    if 'agents' in can:
-        out['agents'] = can['agents']
-    print(f'VALID:\t{compact(out)}')
-
-elif mode == 'set':
-    ops = []
-    for tok in rest:
-        if '=' not in tok:
-            err('BAD_ARGS', f'{tok} — set takes <field>=<value> assignments')
-            continue
-        field, _, value = tok.partition('=')
-        spec = parse_field(field)
-        if spec is None:
-            continue
-        if value == 'default':
-            ops.append(('clear', spec))
-            continue
-        if spec[0] == 'top':
-            if value not in TOP_VALUES[spec[1]]:
-                err(TOP_FAIL[spec[1]], f'{tok} — allowed values: {", ".join(TOP_VALUES[spec[1]])}, default')
-                continue
-        else:
-            f = spec[2]
-            allowed = MODELS if f == 'model' else EFFORTS
-            if value not in allowed:
-                err('UNKNOWN_MODEL' if f == 'model' else 'UNKNOWN_EFFORT',
-                    f'{tok} — allowed values: {", ".join(allowed)}, default')
-                continue
-        ops.append(('set', spec, value))
-    bail_if_errors()
-    cfg = load(path)
-    bail_if_errors()
-    apply_ops(cfg, ops)
-    # Validate the merged result, not just the assignments: a pre-existing bad
-    # value the merge would preserve fails loudly here, named, before any write.
-    validate_cfg(cfg)
-    bail_if_errors()
-    write_result(path, cfg)
-
-elif mode == 'clear':
-    ops = []
-    for tok in rest:
-        if '=' in tok:
-            err('BAD_ARGS', f'{tok} — clear takes bare fields, no "="')
-            continue
-        spec = parse_field(tok)
-        if spec is not None:
-            ops.append(('clear', spec))
-    bail_if_errors()
-    cfg = load(path)
-    bail_if_errors()
-    apply_ops(cfg, ops)
-    validate_cfg(cfg)
-    bail_if_errors()
-    write_result(path, cfg)
-
-elif mode == 'reset':
-    if not rest:
-        # Full reset never parses — it is the recovery path for a mangled file.
-        emit_state({})
-        if os.path.exists(path):
-            os.remove(path)
-            print(f'DELETED:\t{path}')
-    else:
-        stage = rest[0]
-        if stage not in STAGES:
-            err('UNKNOWN_STAGE', f'{stage} — stages are {", ".join(STAGES)}')
-        bail_if_errors()
-        cfg = load(path)
-        bail_if_errors()
-        ag = cfg.get('agents')
-        if isinstance(ag, dict):
-            ag.pop(stage, None)
-        validate_cfg(cfg)
-        bail_if_errors()
-        write_result(path, cfg)
-PY
+# The write tail every mutating subcommand shares: apply, canonical
+# write, resulting state, exclude upkeep, defaults.
+write_and_report() {
+  local merged out
+  merged="$(apply_ops "$cfg")"
+  emit_state "$merged"
+  # Captured, not piped through: config_write's typed fail() must exit
+  # THIS process, and a pipeline segment's exit cannot.
+  if ! out="$(printf '%s\n' "$merged" | config_write "$config_file")"; then
+    printf '%s\n' "$out"
+    exit 1
+  fi
+  [ -n "$out" ] && printf '%s\n' "$out"
+  ensure_exclude
+  emit_defaults
 }
 
 sub="${1:-}"
@@ -421,38 +260,83 @@ sub="${1:-}"
 
 case "$sub" in
   show)
-    resolve_repo
-    py show "$config_file" || exit 1
+    resolve_config_repo
+    load_config
+    emit_state "$cfg"
     emit_defaults
     exit 0
     ;;
   validate)
-    resolve_repo
-    py validate "$config_file"
-    exit $?
+    resolve_config_repo
+    load_config
+    printf 'VALID:\t%s\n' "$(launch_json "$cfg")"
+    exit 0
     ;;
   set)
     [[ $# -ge 1 ]] || fail BAD_ARGS "usage: config.sh set <field>=<value> [...]"
-    resolve_repo
-    py set "$config_file" "$@" || exit 1
-    ensure_exclude
-    emit_defaults
+    resolve_config_repo
+    for tok in "$@"; do
+      case "$tok" in
+        *=*) ;;
+        *) err BAD_ARGS "$tok — set takes <field>=<value> assignments"; continue ;;
+      esac
+      field="${tok%%=*}"
+      value="${tok#*=}"
+      parse_field "$field" || continue
+      if [ "$value" = "default" ]; then
+        add_op clear "$ckey"
+        continue
+      fi
+      allowed="$(config_allowed_values "$ckey")"
+      if ! in_list "$value" "$allowed"; then
+        err "$(config_fail_reason "$ckey")" "$tok — allowed values: $(commas "$allowed"), default"
+        continue
+      fi
+      add_op set "$ckey" "$value"
+    done
+    bail_if_errors
+    load_config
+    write_and_report
     exit 0
     ;;
   clear)
     [[ $# -ge 1 ]] || fail BAD_ARGS "usage: config.sh clear <field> [...]"
-    resolve_repo
-    py clear "$config_file" "$@" || exit 1
-    ensure_exclude
-    emit_defaults
+    resolve_config_repo
+    for tok in "$@"; do
+      case "$tok" in
+        *=*) err BAD_ARGS "$tok — clear takes bare fields, no \"=\""; continue ;;
+      esac
+      parse_field "$tok" || continue
+      add_op clear "$ckey"
+    done
+    bail_if_errors
+    load_config
+    write_and_report
     exit 0
     ;;
   reset)
     [[ $# -le 1 ]] || fail BAD_ARGS "usage: config.sh reset [stage]"
-    resolve_repo
-    py reset "$config_file" "$@" || exit 1
-    ensure_exclude
-    emit_defaults
+    resolve_config_repo
+    if [[ $# -eq 0 ]]; then
+      # Full reset never parses — it is the recovery path for a mangled file.
+      emit_state ""
+      if [[ -e "$config_file" ]]; then
+        rm -f "$config_file"
+        printf 'DELETED:\t%s\n' "$config_file"
+      fi
+      ensure_exclude
+      emit_defaults
+      exit 0
+    fi
+    stage="$1"
+    if ! in_list "$stage" "$ORCA_STAGES"; then
+      err UNKNOWN_STAGE "$stage — stages are $(commas "$ORCA_STAGES")"
+    fi
+    bail_if_errors
+    load_config
+    add_op clear "agents.$stage.model"
+    add_op clear "agents.$stage.effort"
+    write_and_report
     exit 0
     ;;
   *)

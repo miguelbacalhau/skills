@@ -15,6 +15,14 @@ setup() {
   BATS_TEST_TMPDIR="$(cd "$BATS_TEST_TMPDIR" && pwd -P)"
   export HOME="$BATS_TEST_TMPDIR/home"
   mkdir -p "$HOME"
+  # The runtime envelope is bash 3.2 + git + coreutils: python3 is
+  # poisoned for every test, so any script call to it fails loudly
+  # instead of passing on a dev machine that happens to have it.
+  mkdir -p "$BATS_TEST_TMPDIR/envelope-bin"
+  printf '#!/bin/sh\necho "python3 called — the orca envelope forbids it" >&2\nexit 127\n' \
+    >"$BATS_TEST_TMPDIR/envelope-bin/python3"
+  chmod +x "$BATS_TEST_TMPDIR/envelope-bin/python3"
+  export PATH="$BATS_TEST_TMPDIR/envelope-bin:$PATH"
   export GIT_CONFIG_GLOBAL=/dev/null
   export GIT_CONFIG_SYSTEM=/dev/null
   export GIT_AUTHOR_NAME="orca test" GIT_AUTHOR_EMAIL="orca-test@example.invalid"

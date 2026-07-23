@@ -17,7 +17,7 @@ Make the *machine* ready for orca runs. Repository layout is orca:init's job and
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh
 ```
 
-Report every gate in plain language: `BARE_REPO` (`PASS | FAIL`), the `REVIEWER:` line (which reviewer, pinned by `.orca/config.json` or detected from the machine), and `CODEX` (`PASS | FAIL | SKIPPED` — skipped means the resolved reviewer is claude and the codex checks deliberately did not run). A `REVIEWER: FAIL` means the config key is invalid — point at orca:config; nothing here edits that file.
+Report every gate in plain language: `BARE_REPO` (`PASS | FAIL`), the `REVIEWER:` line (which reviewer, pinned by `.orca/config` or detected from the machine), and `CODEX` (`PASS | FAIL | SKIPPED` — skipped means the resolved reviewer is claude and the codex checks deliberately did not run). A `REVIEWER: FAIL` means the config key is invalid — point at orca:config; nothing here edits that file.
 
 Whenever the resolved reviewer is codex, add the one probe the script cannot run — the **live MCP probe**, from this session: call ToolSearch with `select:mcp__plugin_orca_orca-codex__codex`. Missing while the codex gates pass means review agents cannot reach codex, and the cause is one of two. First check whether the project carries MCP config of its own — a `.mcp.json` at the repo root, or local-scope servers (`claude mcp list` shows both): a known harness bug (present as of Claude Code 2.1.202) loads none of a plugin's bundled MCP servers when any such config exists. A leftover `codex` registration is redundant — the plugin bundles the server — so prescribe removing it, never remove it yourself; if the project genuinely needs its own MCP servers, the workaround is pinning `reviewer=claude` via orca:config, trade-off stated. Otherwise the session predates the plugin's install or enablement. Both remedies end in a fresh session, so name that alongside the other restart caveats.
 
@@ -91,5 +91,5 @@ Re-run the pre-flight (inside a repository) or the direct codex probes (machine-
 
 - Diagnosis is free; every write is announced and confirmed first. Binaries and auth remain the user's actions — surface the command, never run installs or logins autonomously.
 - Never touch repository layout, history, refs, or remotes — that is orca:init's territory.
-- Never edit `.orca/config.json` — pinning or clearing the reviewer belongs to orca:config; recommend it by name instead.
+- Never edit `.orca/config` — pinning or clearing the reviewer belongs to orca:config; recommend it by name instead.
 - A codex gate failing while the reviewer is codex is a failure to fix, never a reason to suggest silently switching the reviewer — swapping the reviewer out from under a codex user is a decision, so it goes through orca:config with the trade-off stated.

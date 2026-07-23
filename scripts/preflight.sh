@@ -6,14 +6,14 @@
 # top level for .claude/), so running from a subdirectory can neither
 # silently downgrade a pinned reviewer nor produce false timeout FAILs.
 #
-# Reads one config key — "reviewer" from ./.orca/config.json — to decide
+# Reads one config key — "reviewer" from ./.orca/config — to decide
 # whether the codex gate applies; otherwise touches nothing. Prints one
 # machine-readable line per gate:
 #   <KEY>: PASS
 #   <KEY>: FAIL: <terse remediation>
 #   <KEY>: SKIPPED: <why it was not checked>   (CODEX only)
-# plus informational TRUNK_CANDIDATE and REVIEWER lines and a final RESULT
-# line.
+# plus informational TRUNK_CANDIDATE, REVIEWER, and CONFIG lines and a
+# final RESULT line.
 #
 # No AGENTS gate and no MCP-registration checks: the subagent definitions
 # and the codex MCP server registration ship inside the orca plugin, so a
@@ -64,8 +64,16 @@ if [[ -n "$common_dir" ]]; then
   worktree_root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 fi
 
+# Informational signpost, never a FAIL: the legacy JSON config is not
+# read by anything since the flat-file migration — without this line, a
+# previously pinned reviewer silently reverting to detection would
+# surface at minute forty instead of minute zero.
+if [[ -f "${repo_root:-.}/.orca/config.json" ]]; then
+  echo "CONFIG: OBSOLETE: .orca/config.json is no longer read — see orca:config"
+fi
+
 # --- REVIEWER: which independent reviewer runs — pinned in config, else detected ---
-# A written "reviewer" key in ./.orca/config.json pins the choice; absent, the
+# A written "reviewer" key in ./.orca/config pins the choice; absent, the
 # machine decides: codex binary on PATH at >= the minimum version -> codex,
 # else claude. Detection is binary-presence-at-version ONLY — auth or timeout
 # problems on a detected/pinned codex are CODEX gate failures below, never a
@@ -86,17 +94,17 @@ if command -v codex >/dev/null 2>&1; then
   fi
 fi
 
-# Extraction is grep-only by design: orca:config is the sole writer and emits
-# compact well-formed JSON in which "reviewer" can only be the top-level key.
+# Extraction is grep-only by design: orca:config (via lib.sh) is the sole
+# writer and only ever writes canonical one-key-per-line reviewer=<value>.
 # Zero matches -> absent (detect); exactly one distinct valid value -> pinned;
 # anything else (duplicates, an unrecognized value) -> loud FAIL, never a guess.
 reviewer=""
 reviewer_provenance=""
 reviewer_invalid=0
-config_file="${repo_root:-.}/.orca/config.json"
+config_file="${repo_root:-.}/.orca/config"
 if [[ -f "$config_file" ]]; then
-  reviewer_values="$(grep -o '"reviewer"[[:space:]]*:[[:space:]]*"[a-z]*"' "$config_file" 2>/dev/null \
-    | grep -o '"[a-z]*"$' | tr -d '"' | sort -u || true)"
+  reviewer_values="$(grep '^reviewer=' "$config_file" 2>/dev/null \
+    | sed 's/^reviewer=//' | sort -u || true)"
   value_count="$(printf '%s' "$reviewer_values" | grep -c . || true)"
   if [[ "$value_count" -eq 1 && ( "$reviewer_values" == "codex" || "$reviewer_values" == "claude" ) ]]; then
     reviewer="$reviewer_values"
@@ -104,7 +112,7 @@ if [[ -f "$config_file" ]]; then
   elif [[ "$value_count" -gt 0 ]]; then
     # Multiple distinct values or an unrecognized one — a hand-mangled file.
     # Fail loudly, never guess; the CODEX gate is skipped as unresolvable.
-    echo "REVIEWER: FAIL: invalid reviewer in .orca/config.json — fix with orca:config"
+    echo "REVIEWER: FAIL: invalid reviewer in .orca/config — fix with orca:config"
     fail=1
     reviewer_invalid=1
   fi

@@ -29,13 +29,13 @@
 //                     evidence — absent, prompts stay byte-identical to
 //                     pre-retry journals
 //   agents            optional { <stage>: { model?, effort? } } — per-stage
-//                     overrides from <repo-root>/.orca/config.json (written by
+//                     overrides from <repo-root>/.orca/config (written by
 //                     the orca:config skill, read by the run skill at launch),
 //                     applied on top of each stage agent's own frontmatter
 //                     defaults; an absent stage or field keeps the default
 //   reviewer          'codex' | 'claude' — which independent reviewer this run
 //                     uses. REQUIRED: the run skill resolves it before launch
-//                     (pinned in .orca/config.json, else detected from the
+//                     (pinned in .orca/config, else detected from the
 //                     preflight); this script never detects — it has no shell
 //                     and must stay deterministic for resume
 //   updateContext     optional boolean, default true — run the orca:context
@@ -201,7 +201,7 @@ const TUNABLE = ['plan', 'implement', 'review', 'fix', 'commit', 'merge', 'integ
 // launch failure.
 const STAGES = ['spec', ...TUNABLE, 'reproduce', 'hypothesize', 'verify', 'diagnose']
 // The stage vocabulary is one shared 12-key list kept in lockstep across
-// three code validators — scripts/config.sh (write time, and the run skills'
+// three code validators — scripts/lib.sh (config.sh's write path, and the run skills'
 // launch validation via its validate subcommand), this script, and
 // debug-loop.workflow.js — a value accepted anywhere but rejected here bricks
 // every launch until the config file is hand-edited. MODELS/EFFORTS are part

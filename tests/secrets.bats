@@ -3,18 +3,11 @@
 
 load helpers
 
-# Every invocation runs with python3 poisoned: symlink-ownership
-# resolution is the lib's pure-bash canonicalizer now, and any python3
-# call is an envelope regression — the stub makes it a loud failure
-# instead of a silent dependency.
+# python3 is poisoned for every test by helpers.bash's setup — symlink
+# ownership resolution is the lib's pure-bash canonicalizer, and any
+# python3 call is an envelope regression that fails loudly.
 secrets() {
-  local stub="$BATS_TEST_TMPDIR/no-python-bin"
-  if [ ! -x "$stub/python3" ]; then
-    mkdir -p "$stub"
-    printf '#!/bin/sh\necho "python3 called — the orca envelope forbids it" >&2\nexit 127\n' >"$stub/python3"
-    chmod +x "$stub/python3"
-  fi
-  PATH="$stub:$PATH" bash "$SCRIPTS/secrets.sh" "$@"
+  bash "$SCRIPTS/secrets.sh" "$@"
 }
 
 # make_bare_layout comes from helpers.bash; these tests add the secrets

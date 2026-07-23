@@ -35,7 +35,7 @@
 //                REQUIRED even under diagnose-only (where it is unused): the
 //                skill resolves it before launch and a resume must replay it
 //   agents       optional { <stage>: { model?, effort? } } from
-//                <repo-root>/.orca/config.json — one shared block for both
+//                <repo-root>/.orca/config — one shared block for both
 //                verbs: the debug stages (reproduce, hypothesize, verify,
 //                diagnose) are applied here, the feature stages are validated
 //                here and applied by the nested work loop, which receives the
@@ -117,7 +117,7 @@ if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.s
 
 // Per-stage model/effort overrides (args.agents). The stage vocabulary is the
 // ONE shared 12-key list — feature's stages plus debug's — kept in lockstep
-// across scripts/config.sh (write time, and the run skills' launch validation
+// across scripts/lib.sh (config.sh's write path, and the run skills' launch validation
 // via its validate subcommand), work-loop.workflow.js, and this script: the
 // config file has a single agents block, and a key accepted by any validator
 // must be accepted by all three, or a written override bricks the other

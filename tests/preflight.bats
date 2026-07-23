@@ -53,7 +53,7 @@ preflight_with_codex() { # <version> <ok|denied>
 @test "pinned codex with an outdated binary fails loud, no silent downgrade" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"codex"}\n' >.orca/config.json
+  printf 'reviewer=codex\n' >.orca/config
   preflight_with_codex 0.1.0 ok
   [ "$status" -eq 1 ]
   has_line 'REVIEWER: codex (pinned)'
@@ -64,7 +64,7 @@ preflight_with_codex() { # <version> <ok|denied>
 @test "pinned codex without auth fails the codex gate" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"codex"}\n' >.orca/config.json
+  printf 'reviewer=codex\n' >.orca/config
   preflight_with_codex 999.0.0 denied
   [ "$status" -eq 1 ]
   has_line 'CODEX: FAIL: not authenticated'
@@ -73,7 +73,7 @@ preflight_with_codex() { # <version> <ok|denied>
 @test "pinned codex without MCP_TOOL_TIMEOUT fails the codex gate" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"codex"}\n' >.orca/config.json
+  printf 'reviewer=codex\n' >.orca/config
   preflight_with_codex 999.0.0 ok
   [ "$status" -eq 1 ]
   has_line 'CODEX: FAIL: MCP_TOOL_TIMEOUT'
@@ -82,7 +82,7 @@ preflight_with_codex() { # <version> <ok|denied>
 @test "an invalid reviewer value fails loud, gate unresolvable" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"gemini"}\n' >.orca/config.json
+  printf 'reviewer=gemini\n' >.orca/config
   preflight_with_codex 999.0.0 ok
   [ "$status" -eq 1 ]
   has_line 'REVIEWER: FAIL'
@@ -93,16 +93,28 @@ preflight_with_codex() { # <version> <ok|denied>
   # finding 8.3: config paths resolve from CWD, so running anywhere but
   # the repo root silently downgrades a pinned reviewer to detection
   make_bare_layout "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"claude"}\n' >"$BATS_TEST_TMPDIR/r/.orca/config.json"
+  printf 'reviewer=claude\n' >"$BATS_TEST_TMPDIR/r/.orca/config"
   mkdir -p "$BATS_TEST_TMPDIR/r/main/src"
   cd "$BATS_TEST_TMPDIR/r/main/src"
   preflight_with_codex 999.0.0 ok
   has_line 'REVIEWER: claude (pinned)'
 }
 
+@test "a leftover config.json gets the informational OBSOLETE line, never a FAIL" {
+  make_bare_layout "$BATS_TEST_TMPDIR/r"
+  cd "$BATS_TEST_TMPDIR/r"
+  printf '{"reviewer":"codex"}\n' >.orca/config.json
+  preflight_with_codex "" denied
+  [ "$status" -eq 0 ]
+  has_line 'CONFIG: OBSOLETE: .orca/config.json is no longer read'
+  # nothing parses it: the pinned-looking value does not pin
+  has_line 'REVIEWER: claude (detected)'
+  has_line 'RESULT: PASS'
+}
+
 @test "settings env blocks are found from a worktree subdirectory" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
-  printf '{"reviewer":"codex"}\n' >"$BATS_TEST_TMPDIR/r/.orca/config.json"
+  printf 'reviewer=codex\n' >"$BATS_TEST_TMPDIR/r/.orca/config"
   mkdir -p "$BATS_TEST_TMPDIR/r/.claude"
   printf '{"env":{"MCP_TOOL_TIMEOUT":"1200000"}}\n' >"$BATS_TEST_TMPDIR/r/.claude/settings.json"
   mkdir -p "$BATS_TEST_TMPDIR/r/main/src"

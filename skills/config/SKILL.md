@@ -1,5 +1,5 @@
 ---
-description: View and set per-repository overrides for orca runs — which Claude model and reasoning effort each stage agent (spec, plan, implement, review, fix, commit, merge, integrate for feature runs; reproduce, hypothesize, verify, diagnose for debug runs) runs with, which independent reviewer (codex or claude) the work loop uses, and how orca:review hands deliverables to the human (`editor`, `terminal`). Writes `.orca/config.json` at the repo root; orca:feature and orca:debug read it at launch and thread the overrides into every stage agent they spawn, orca:review reads it per invocation. Use when the user wants runs cheaper (smaller models, lower effort), stronger (bigger models, higher effort), wants to pin or switch the reviewer, wants to pin or opt out of the editor hand-off, or wants to see the current configuration. Does not start a run and never edits the plugin's own agent definitions.
+description: View and set per-repository overrides for orca runs — which Claude model and reasoning effort each stage agent (spec, plan, implement, review, fix, commit, merge, integrate for feature runs; reproduce, hypothesize, verify, diagnose for debug runs) runs with, which independent reviewer (codex or claude) the work loop uses, and how orca:review hands deliverables to the human (`editor`, `terminal`). Writes `.orca/config` at the repo root; orca:feature and orca:debug read it at launch and thread the overrides into every stage agent they spawn, orca:review reads it per invocation. Use when the user wants runs cheaper (smaller models, lower effort), stronger (bigger models, higher effort), wants to pin or switch the reviewer, wants to pin or opt out of the editor hand-off, or wants to see the current configuration. Does not start a run and never edits the plugin's own agent definitions.
 args: <assignments like plan.model=sonnet review.effort=high reviewer=claude editor=vscode, or "reset"; optional>
 user-invocable: true
 disable-model-invocation: true
@@ -7,7 +7,7 @@ disable-model-invocation: true
 
 # Orca: config
 
-Tune orca runs per repository: which model and reasoning effort each stage agent runs with, and which independent reviewer the work loop uses. Every stage agent ships a default in its own definition — the frontmatter of `agents/<stage>.md` inside the plugin — and this skill never touches those files: it writes overrides to `<repo-root>/.orca/config.json`, which orca:feature and orca:debug read at launch and apply on top of the defaults. An override file survives plugin updates; deleting an override returns that stage to whatever the plugin's current default is.
+Tune orca runs per repository: which model and reasoning effort each stage agent runs with, and which independent reviewer the work loop uses. Every stage agent ships a default in its own definition — the frontmatter of `agents/<stage>.md` inside the plugin — and this skill never touches those files: it writes overrides to `<repo-root>/.orca/config`, which orca:feature and orca:debug read at launch and apply on top of the defaults. An override file survives plugin updates; deleting an override returns that stage to whatever the plugin's current default is.
 
 The config has three surfaces:
 
@@ -23,13 +23,15 @@ The workflow's internal helper agents — the shell relay, reconciliation, escal
 
 ## Step 1: Read the current state
 
-The bundled script is the sole reader and writer of `<repo-root>/.orca/config.json` — never read, author, or repair the file directly:
+The bundled script is the sole reader and writer of `<repo-root>/.orca/config` — never read, author, or repair the file directly:
 
 ```bash
 bash ${CLAUDE_PLUGIN_ROOT}/scripts/config.sh show
 ```
 
 One typed TAB-separated line per fact: `REVIEWER:` (the pinned value, or `absent`), `EDITOR:` and `TERMINAL:` (value or `absent`), one `OVERRIDE:` line per set stage field, and one `DEFAULT: <stage> <model> <effort>` line per stage — read fresh from the plugin's own agent definitions, so they track the installed plugin version. The review stage appears twice, as `review-codex` and `review-claude`; render the row for the effective reviewer. A `FAIL:` line names what is wrong — translate it: `NOT_GIT` means the config is per-repository, so explain that and stop; a mangled file (`PARSE_ERROR`, `DUPLICATE_KEY`, an unknown key or value) is fixed by a targeted `set`/`clear`, or by `config.sh reset` — the full reset is the recovery path and works even when the file cannot be parsed.
+
+If a legacy `<repo-root>/.orca/config.json` exists, mention that it is obsolete — nothing has read it since the flat-file migration (the preflight emits a `CONFIG: OBSOLETE:` signpost while it lingers) — and offer to delete it. Never parse or migrate it: the values are retyped in seconds with `set`.
 
 To resolve the **effective** reviewer when the key is absent, run the bundled preflight (`bash ${CLAUDE_PLUGIN_ROOT}/scripts/preflight.sh`) and read its `REVIEWER:` line — the config script never detects; compose the two outputs.
 
@@ -72,6 +74,6 @@ Render that resulting state back to the user as Step 2 does, and state when it t
 
 ## Guidelines
 
-- Never edit `${CLAUDE_PLUGIN_ROOT}/agents/*.md` — plugin files are replaced on update, and the defaults are the plugin's to set. Overrides live only in the repo's `.orca/config.json`, and every read and write of that file goes through `config.sh` — the canonical shape it guarantees is what lets the preflight and orca:review scripts read the file with grep.
+- Never edit `${CLAUDE_PLUGIN_ROOT}/agents/*.md` — plugin files are replaced on update, and the defaults are the plugin's to set. Overrides live only in the repo's `.orca/config`, and every read and write of that file goes through `config.sh` — the canonical shape it guarantees is what lets the preflight and orca:review scripts read the file with grep.
 - This skill configures the reviewer choice, the orca:review `editor`/`terminal` keys, and models/effort only. The codex machine setup (binary, auth, MCP timeout) and the orca.nvim / orca.vscode installs belong to orca:doctor; repository layout belongs to orca:init; run behavior belongs to orca:feature and orca:debug; opening the review itself belongs to orca:review.
 - Advise, don't moralize: if an override looks self-defeating (haiku for plan or merge, where judgment failures cost whole items; max effort on commit, which formats a message), say so in one sentence and write what the user chose.

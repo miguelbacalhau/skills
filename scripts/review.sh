@@ -78,7 +78,7 @@
 #                NO_BRANCH UNKNOWN_VALUE PINNED_PROBE_FAILED
 #                PINNED_TERMINAL_UNSET
 #
-# Config comes from <repo-root>/.orca/config.json — the flat top-level
+# Config comes from <repo-root>/.orca/config — the flat top-level
 # `editor` (nvim|vscode|none) and `terminal` (tmux|none) keys, each with
 # the three-state contract: absent -> detect, pinned -> loud FAIL when its
 # dependency is missing, none -> opt out to PRINT_ONLY. Detection probes
@@ -86,8 +86,8 @@
 # editor resolved to nvim (the vscode launch is a detached GUI). Nothing
 # here writes the config — that is orca:config's job.
 #
-# Extraction is grep-only by design: orca:config is the sole writer and
-# emits compact well-formed JSON in which these can only be top-level keys.
+# Extraction is grep-only by design: orca:config (via lib.sh) is the sole
+# writer and only ever writes canonical one-key-per-line key=value.
 
 set -uo pipefail
 
@@ -147,17 +147,17 @@ resolve_repo() {
   fi
 }
 
-# Extract one flat string key from .orca/config.json. Echoes the value
+# Extract one flat string key from .orca/config. Echoes the value
 # (empty = absent). Returns 1 on multiple distinct values — a hand-mangled
 # file the caller turns into a loud FAIL, never a guess.
 read_config_key() {
-  local key="$1" file="$repo_root/.orca/config.json" values count
+  local key="$1" file="$repo_root/.orca/config" values count
   if [[ ! -f "$file" ]]; then
     echo ""
     return 0
   fi
-  values="$(grep -o "\"$key\"[[:space:]]*:[[:space:]]*\"[^\"]*\"" "$file" 2>/dev/null \
-    | grep -o '"[^"]*"$' | tr -d '"' | sort -u || true)"
+  values="$(grep "^$key=" "$file" 2>/dev/null \
+    | sed "s/^$key=//" | sort -u || true)"
   count="$(printf '%s' "$values" | grep -c . || true)"
   if [[ "$count" -gt 1 ]]; then
     return 1
@@ -323,7 +323,7 @@ cmd_open() {
   # --- editor: absent -> detect (nvim, then vscode), pinned -> loud fail, none -> opt out ---
   local editor probe_detail=""
   if ! editor="$(read_config_key editor)"; then
-    fail UNKNOWN_VALUE "multiple conflicting editor values in .orca/config.json — fix with orca:config"
+    fail UNKNOWN_VALUE "multiple conflicting editor values in .orca/config — fix with orca:config"
   fi
   case "$editor" in
     nvim|vscode|none|"") ;;
@@ -361,7 +361,7 @@ cmd_open() {
     # --- terminal: consulted only for nvim — the vscode launch is a detached GUI ---
     local terminal
     if ! terminal="$(read_config_key terminal)"; then
-      fail UNKNOWN_VALUE "multiple conflicting terminal values in .orca/config.json — fix with orca:config"
+      fail UNKNOWN_VALUE "multiple conflicting terminal values in .orca/config — fix with orca:config"
     fi
     case "$terminal" in
       tmux|none|"") ;;
