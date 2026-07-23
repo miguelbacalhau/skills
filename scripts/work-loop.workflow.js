@@ -43,14 +43,18 @@
 //                     the Integrate phase. The debug loop passes false into
 //                     its nested fix call: the debug run maintains the
 //                     context itself, with the diagnosis in hand
-//   pluginRoot        optional absolute path of the installed plugin root
+//   pluginRoot        REQUIRED absolute path of the installed plugin root
 //                     (the launching skill substitutes ${CLAUDE_PLUGIN_ROOT}
-//                     — this script has no environment to resolve it from);
-//                     when present, secrets.sh place runs after every
-//                     worktree add, linking <repoRoot>/.orca/secrets/ into
-//                     the fresh worktree. Absent (a resume of a pre-secrets
-//                     launch) skips placement and keeps the worktree
-//                     commands byte-identical to the old journal
+//                     — this script has no environment to resolve it from).
+//                     The worktree/commit/merge rituals run through the
+//                     plugin-shipped CLI (scripts/orca.sh), and secrets.sh
+//                     place runs after every worktree add — a missing plugin
+//                     root means "can't commit anything", so the launch
+//                     refuses typed (NO_PLUGIN_ROOT) instead of failing at
+//                     minute forty. preflight.sh verifies the dispatcher
+//                     file exists launcher-side; this script can only
+//                     assert the argument's shape (no filesystem here) —
+//                     the two checks are complementary, not redundant
 // }
 //
 // Review prompts are not inputs: the reviewer agent (orca:review-codex driving
@@ -167,11 +171,15 @@ const reviewer = parsedArgs.reviewer
 if (reviewer !== 'codex' && reviewer !== 'claude')
   throw new Error(`args.reviewer must be "codex" or "claude" (got ${JSON.stringify(reviewer)}) — the run skill resolves it before launch`)
 
-// Secrets placement needs the plugin root to find secrets.sh; optional so a
-// resume of a launch that predates the arg still replays instead of failing.
+// The worktree/commit/merge rituals run through the plugin-shipped CLI, so a
+// missing plugin root means "can't commit anything" — mandatory, refused
+// typed at launch. No inline fallback path: a second implementation of the
+// trickiest logic that almost never runs would rot untested. "Plugin
+// installed but its own directory unknown" is a launcher bug to surface,
+// not a state to limp through.
 const pluginRoot = parsedArgs.pluginRoot
-if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')))
-  throw new Error(`args.pluginRoot, when present, must be an absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
+if (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/'))
+  throw new Error(`NO_PLUGIN_ROOT: args.pluginRoot must be the installed plugin's absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
 
 // Post-run context maintenance is on unless the caller opts out (the debug
 // loop's nested fix call does — the debug run maintains the context itself).
@@ -350,6 +358,121 @@ const mustSha = (sha, label) => {
   return sha
 }
 
+// ---------- relay codec: base64 + UTF-8 + frame decoder ----------
+// LOCKSTEP: a literal copy of this block lives in each workflow script
+// that calls the CLI verbs — the sandbox reads no files, so each script
+// carries its own (the MODELS/EFFORTS precedent); CI extracts and tests
+// the block under node (.github/scripts/frame-decoder-test.js). The
+// sandbox exposes NO atob/btoa/Buffer/TextDecoder/TextEncoder (verified
+// empirically 2026-07-23 with a zero-agent probe) — "standard JS
+// built-ins" means ECMAScript only, so the UTF-8 step is hand-rolled
+// here: commit messages carry non-ASCII.
+const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+const b64encode = s => {
+  const b = []
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)
+    if (cp < 0x80) b.push(cp)
+    else if (cp < 0x800) b.push(0xc0 | (cp >> 6), 0x80 | (cp & 63))
+    else if (cp < 0x10000) b.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63))
+    else b.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63))
+  }
+  let out = ''
+  for (let i = 0; i < b.length; i += 3) {
+    const n = (b[i] << 16) | ((b[i + 1] ?? 0) << 8) | (b[i + 2] ?? 0)
+    out += B64_ALPHABET[n >> 18] + B64_ALPHABET[(n >> 12) & 63] +
+      (i + 1 < b.length ? B64_ALPHABET[(n >> 6) & 63] : '=') +
+      (i + 2 < b.length ? B64_ALPHABET[n & 63] : '=')
+  }
+  return out
+}
+const b64decode = s => {
+  const clean = s.replace(/\s+/g, '').replace(/=+$/, '')
+  if (!/^[A-Za-z0-9+/]*$/.test(clean) || clean.length % 4 === 1)
+    throw new Error('value is not base64')
+  const bytes = []
+  for (let i = 0; i < clean.length; i += 4) {
+    const chunk = clean.slice(i, i + 4)
+    let n = 0
+    for (const c of chunk) n = (n << 6) | B64_ALPHABET.indexOf(c)
+    n <<= 6 * (4 - chunk.length)
+    bytes.push((n >> 16) & 255)
+    if (chunk.length > 2) bytes.push((n >> 8) & 255)
+    if (chunk.length > 3) bytes.push(n & 255)
+  }
+  let out = ''
+  for (let i = 0; i < bytes.length;) {
+    const b0 = bytes[i++]
+    let cp, extra
+    if (b0 < 0x80) { cp = b0; extra = 0 }
+    else if ((b0 & 0xe0) === 0xc0) { cp = b0 & 31; extra = 1 }
+    else if ((b0 & 0xf0) === 0xe0) { cp = b0 & 15; extra = 2 }
+    else if ((b0 & 0xf8) === 0xf0) { cp = b0 & 7; extra = 3 }
+    else throw new Error('decoded value is not valid UTF-8')
+    for (; extra > 0; extra--) {
+      const bn = bytes[i++]
+      if (bn === undefined || (bn & 0xc0) !== 0x80) throw new Error('decoded value is not valid UTF-8')
+      cp = (cp << 6) | (bn & 63)
+    }
+    out += String.fromCodePoint(cp)
+  }
+  return out
+}
+// Frame grammar, normative alongside lib.sh's emitter: between @@ORCA@@
+// and @@ORCA_END@@, a line opening one of the frame's DECLARED keys
+// (each verb's key set is fixed) starts that key; ANY other line is a
+// continuation of the open key's value — joined, then whitespace
+// stripped from .b64 values before decoding. The continuation rule is
+// what lets a relay-wrapped multi-KB message.b64 line rejoin instead of
+// burning the one retry; matching declared keys (not a generic charset)
+// keeps a wrapped base64 continuation ending in '=' padding from
+// masquerading as a key line. A continuation before any key, or a .b64
+// value that still fails to decode after the join, throws — the loud
+// retryable frame-decode failure. Decoded .b64 keys land WITHOUT the
+// suffix (message.b64 -> message).
+const decodeFrame = (raw, keys) => {
+  const lines = raw.split('\n')
+  const a = lines.findIndex(l => l.trim() === '@@ORCA@@')
+  const b = lines.map(l => l.trim()).lastIndexOf('@@ORCA_END@@')
+  if (a === -1 || b <= a) throw new Error('frame markers missing from verb output')
+  const out = {}
+  let open = null
+  for (const line of lines.slice(a + 1, b)) {
+    const key = keys.find(k => line.startsWith(`${k}=`))
+    if (key) { open = key; out[key] = line.slice(key.length + 1) }
+    else if (open !== null) out[open] += line
+    else if (line.trim() === '') continue
+    else throw new Error(`frame continuation before any key: ${line.slice(0, 80)}`)
+  }
+  for (const k of Object.keys(out)) {
+    if (k.endsWith('.b64')) { out[k.slice(0, -4)] = b64decode(out[k]); delete out[k] }
+    else out[k] = out[k].trim()
+  }
+  return out
+}
+// ---------- end relay codec ----------
+
+// One relay call per ritual: run a CLI verb through the dispatcher and
+// decode its frame. One retry on frame-decode failure, then fail the
+// item — bounded, matching the lock-retry temperament. A nonzero exit
+// (the verb's typed FAIL line) is the verb's own verdict, thrown by
+// sh() and never retried here. Returns { frame, raw } — raw so callers
+// can surface the verb's pass-through lines (secrets placement).
+const verb = async (argline, keys, label, ph) => {
+  const cmd = `bash "${pluginRoot}/scripts/orca.sh" ${argline}`
+  for (let attempt = 1; ; attempt++) {
+    const raw = await sh(cmd, attempt > 1 ? `${label}~frameretry` : label, ph)
+    try { return { frame: decodeFrame(raw, keys), raw } }
+    catch (err) {
+      if (attempt === 2)
+        throw new Error(`${label}: verb frame did not decode after a retry: ${String((err && err.message) || err)}`)
+    }
+  }
+}
+const WORKTREE_KEYS = ['rc', 'arrival', 'head']
+const COMMIT_VERIFY_KEYS = ['rc', 'action', 'hash', 'message.b64']
+const MERGE_FINALIZE_KEYS = ['rc', 'tip', 'attribution', 'subject', 'cleanup']
+
 // Codex reviews contend for one Codex auth — cap concurrency at 2 (SKILL:
 // review throttling). Codex-only: claude reviews have no shared auth to
 // contend for and ride the workflow's normal concurrency cap.
@@ -416,10 +539,9 @@ const reviewAgentType = reviewer === 'codex' ? 'orca:review-codex' : 'orca:revie
 // that do need them (implement at worktree add, fix, integrate via the
 // skill's placement) re-place. Best-effort both ways — a failed
 // place/remove degrades privilege separation, never the run.
-const secretsStage = async (verb, wt, label) => {
-  if (!pluginRoot) return
-  try { await sh(`bash "${pluginRoot}/scripts/secrets.sh" ${verb} "${wt}"`, label, 'Review') }
-  catch (err) { log(`secrets ${verb} failed (non-fatal) for ${wt}: ${String((err && err.message) || err)}`) }
+const secretsStage = async (mode, wt, label) => {
+  try { await sh(`bash "${pluginRoot}/scripts/secrets.sh" ${mode} "${wt}"`, label, 'Review') }
+  catch (err) { log(`secrets ${mode} failed (non-fatal) for ${wt}: ${String((err && err.message) || err)}`) }
 }
 
 const review = async (id, worktree, round, mode, ownedFiles = []) => {
@@ -521,85 +643,51 @@ const archivePlan = async (i, tag) => {
   } catch (e) { log(`${i.id}: superseded plan not archived (${String((e && e.message) || e)}) — replanning over it`) }
 }
 
-// Commit with the attribution rule enforced against the repository itself, not
-// the agent's self-report: the actual `git log` message is what gets checked.
-// Two agent attempts (reset between them), then a deterministic rewrite.
-// The regex holds only unambiguous attribution markers: "ai" and "agent" are
-// legitimate domain vocabulary ("user-agent header", "feat: add AI summarizer")
-// that false-positives constantly; keeping them out of ordinary prose is the
-// stage agents' own instruction, not something a regex can decide. "orca" is
-// out for the same reason — dogfooding orca on the orca repo would rewrite
-// honest subjects like "feat: orca:status …" into chore: fallbacks.
-const banned = /claude|anthropic|co-authored-by|generated (with|by)/i
-// The agent may have made several commits, so the banned check must read every
-// message it created, never just the tip — a clean later commit would hide a
-// banned trailer beneath it. One command returns both the tip message (the
-// value reported for the item) and the whole span's messages (what is checked).
-const tipAndSpan = async (wt, range, label) => {
-  const out = await shMarked(
-    `git -C "${wt}" log -1 --format=%B ; echo "@@SPAN@@" ; git -C "${wt}" log --format=%B "${range}"`,
-    label, 'Merge')
-  return { tip: out.split('@@SPAN@@')[0].trim(), clean: !banned.test(out) }
-}
-const commitItem = async (wt, id, title, extraLines = []) => {
-  const head = async tag => mustSha(
-    (await shMarked(`git -C "${wt}" rev-parse HEAD`, `head:${id}#${tag}`, 'Merge')).trim(), `head:${id}#${tag}`)
-  const base = await head('base')
+// Commit with the attribution rule enforced against the repository itself,
+// not the agent's self-report. Two agent attempts, each verified by ONE
+// commit-verify relay call (the verb reads the head, judges the whole span
+// against the banned regex — lib.sh is the regex's single holder now, the
+// JS copy is gone — and converges the worktree: accept, wip/prior rewrite,
+// violation reset, or on --final the deterministic fallback). <base> is the
+// worktree head BEFORE the commit agent ran: the per-item path holds it
+// from worktree-item's frame, the integration-fixes path from the extended
+// dirty-check probe — the verb can never read it itself, the agent has
+// already run by then. The title crosses the relay base64-encoded, so a
+// title containing "Claude" never appears literally in the relayed command.
+const commitItem = async (wt, id, title, base, extraLines = []) => {
   const status = statusLine(items.find(i => i.id === id), 'committing')
+  const titleB64 = b64encode(title)
+  let warn = ''
   for (let attempt = 1; attempt <= 2; attempt++) {
     must(await agent(
       [`Worktree: ${wt}`, `Run directory: ${runDir}`, `Item: ${id} — ${title}`, ...extraLines,
-       attempt > 1 ? 'A previous message violated the attribution rule; describe only the change itself.' : '',
-       status]
+       warn, status]
         .filter(Boolean).join('\n'),
       tuned('commit', { agentType: 'orca:commit', label: `commit:${id}#${attempt}`, phase: 'Merge' })),
       `commit:${id}#${attempt}`)
-    const now = await head(attempt)
-    if (now === base) {
-      if (attempt === 2) {
-        // A rebuilt or resumed item may have nothing new to commit — its work
-        // is already committed and only a later stage failed. That is success.
-        const probe = await sh(
-          `if [ -z "$(git -C "${wt}" status --porcelain)" ] && [ "$(git -C "${wt}" rev-list --count "${integrationBranch}..HEAD")" -gt 0 ]; then echo NOTHING_NEW; else echo NEEDS_COMMIT; fi`,
-          `probe:${id}`, 'Merge')
-        if (probe.includes('NOTHING_NEW')) {
-          const prior = await tipAndSpan(wt, `${integrationBranch}..HEAD`, `message:${id}#prior`)
-          if (prior.clean) {
-            // A salvaged `wip:` tip passes the banned regex but marks a
-            // blocked round's partial work, never a finished item — rewrite
-            // it like an attribution violation. Amend, not reset+commit:
-            // there is nothing to stage, and only the tip needs the new
-            // message; a wip commit deeper in the span is honest history.
-            if (!/^wip:/i.test(prior.tip)) return { hash: base, message: prior.tip }
-            const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
-            await sh(`git -C "${wt}" commit --amend -m '${sq(fallback)}'`, `wip-rewrite:${id}`, 'Merge')
-            return { hash: await head('wip-rewrite'), message: fallback }
-          }
-          // Prior commits carry a banned marker (they predate this run's
-          // checks — e.g. an older plugin's round). The item IS built;
-          // falling through to "commit agent made no commit" would block a
-          // finished item on a false premise. Squash the span behind a
-          // clean message instead — built, with rewritten attribution.
-          const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
-          await sh(`git -C "${wt}" reset --soft "$(git -C "${wt}" merge-base "${integrationBranch}" HEAD)" && ` +
-                   `git -C "${wt}" commit -m '${sq(fallback)}'`, `prior-rewrite:${id}`, 'Merge')
-          return { hash: await head('prior-rewrite'), message: fallback }
-        }
-        throw new Error('commit agent made no commit')
-      }
-      continue
+    const { frame } = await verb(
+      `commit-verify "${wt}" ${base} ${id} --branch "${integrationBranch}" --title-b64 ${titleB64}` +
+      (attempt === 2 ? ' --final' : ''),
+      COMMIT_VERIFY_KEYS, `commit-verify:${id}#${attempt}`, 'Merge')
+    switch (frame.action) {
+      case 'accepted':
+      case 'wip_rewritten':
+      case 'prior_squashed':
+      case 'fallback_rewritten':
+        return { hash: mustSha(frame.hash, `commit-verify:${id}#${attempt}`), message: frame.message ?? '' }
+      case 'violation_reset':
+        // The verb reset --soft to base; the second agent attempt recommits
+        // the staged work, and --final guarantees attempt 2 terminates.
+        warn = 'A previous message violated the attribution rule; describe only the change itself.'
+        break
+      case 'needs_commit':
+        if (attempt === 2) throw new Error('commit agent made no commit')
+        break
+      default:
+        throw new Error(`commit-verify:${id}: unknown action ${JSON.stringify(frame.action)}`)
     }
-    const msg = await tipAndSpan(wt, `${base}..HEAD`, `message:${id}#${attempt}`)
-    if (msg.clean) return { hash: now, message: msg.tip }
-    // ${base}, not HEAD~1: the agent may have made zero or several commits.
-    if (attempt === 1) await sh(`git -C "${wt}" reset --soft ${base}`, `reset:${id}`, 'Merge')
   }
-  const fallback = banned.test(title) ? `chore: complete work item ${id}` : `chore: ${title}`
-  // reset + fresh commit, not --amend: the banned marker may sit in a commit
-  // below the tip, and an amend rewrites only HEAD.
-  await sh(`git -C "${wt}" reset --soft ${base} && git -C "${wt}" commit -m '${sq(fallback)}'`,
-           `rewrite:${id}`, 'Merge')
-  return { hash: await head('rewrite'), message: fallback }
+  throw new Error(`commit-verify:${id}: the two-attempt loop ended without a verdict`)
 }
 
 // ---------- per-item pipeline: worktree → implement → review/fix loop → commit → merge ----------
@@ -609,41 +697,28 @@ const buildItem = async item => {
   // Single leaf segment (…-W1, not …/W1): a git ref cannot be both a file and a directory.
   // An interrupted run's worktree survives on disk and is resumed in place; a
   // blocked item survives as its branch (worktree salvaged into a WIP commit
-  // at block time), picked up by the branch arrival below.
+  // at block time), picked up by the verb's branch arrival.
   // -C ${integrationWt}, not ${repoRoot}: the repo root is only a git context
   // via its .git pointer file, and when that file is absent git discovery
   // walks up from it — possibly into an enclosing repo. The integration
   // worktree always resolves to the right bare repo.
-  // Three arrivals: the directory survives from a previous run (resume it in
-  // place); the directory is gone but its branch survived a half-finished
-  // cleanup (re-add the worktree on that branch — `-b` would fail on the
-  // collision); a fresh item. `worktree prune` before the re-add drops any
-  // stale registration whose directory was deleted by hand, which would
-  // otherwise fail the add as "already checked out".
-  // Every arrival gets secrets placement — place is idempotent, so re-running
-  // it over a resumed worktree's existing links is all-OK output.
-  const placeCmd = pluginRoot ? ` && bash "${pluginRoot}/scripts/secrets.sh" place "${wt}"` : ''
-  const wtCmd =
-    `if [ -d "${wt}" ]; then echo WORKTREE_REUSED; ` +
-    `elif git -C "${integrationWt}" rev-parse -q --verify "refs/heads/${branch}" >/dev/null; then ` +
-    `git -C "${integrationWt}" worktree prune && git -C "${integrationWt}" worktree add "${wt}" "${branch}" && echo BRANCH_RESUMED; ` +
-    `else git -C "${integrationWt}" worktree add "${wt}" -b "${branch}" "${integrationBranch}"; fi${placeCmd}`
-  // Parallel items share one git dir; a sibling's ref update can hold
-  // index.lock at exactly the wrong moment. One retry before the failure
-  // blocks the item and its whole dependent subtree.
-  let wtOut
-  try { wtOut = await sh(wtCmd, `worktree:${item.id}`, 'Build') }
-  catch (err) {
-    const msg = String((err && err.message) || err)
-    if (!/\.lock|another git process/i.test(msg)) throw err
-    log(`${item.id}: worktree add hit a lock-shaped failure — retrying once`)
-    wtOut = await sh(wtCmd, `worktree:${item.id}~lockretry`, 'Build')
-  }
-  if (wtOut.includes('WORKTREE_REUSED')) log(`${item.id}: resuming the worktree left by a previous run`)
-  else if (wtOut.includes('BRANCH_RESUMED')) log(`${item.id}: re-created the worktree for the branch left by a previous run`)
+  // One relay call for the whole ritual: the worktree-item verb owns the
+  // three arrivals, the bounded index.lock retry, and the chained secrets
+  // placement (idempotent — a resumed worktree's links are all-OK output).
+  // Its frame reports the worktree head, held as commit-verify's base: valid
+  // only because implement/fix agents are forbidden to commit or stage
+  // (agents/implement.md, agents/fix.md), so HEAD cannot move between here
+  // and the commit stage — if those prompts ever change, this read must
+  // return to its own relay call.
+  const wtRes = await verb(
+    `worktree-item "${integrationWt}" "${wt}" "${branch}" "${integrationBranch}"`,
+    WORKTREE_KEYS, `worktree:${item.id}`, 'Build')
+  const baseSha = mustSha(wtRes.frame.head, `worktree:${item.id}`)
+  if (wtRes.frame.arrival === 'reused') log(`${item.id}: resuming the worktree left by a previous run`)
+  else if (wtRes.frame.arrival === 'branch_resumed') log(`${item.id}: re-created the worktree for the branch left by a previous run`)
   // A secret that could not be placed fails exactly where it fails today —
   // in the build — but with a breadcrumb in the run's logs instead of nothing.
-  for (const line of wtOut.split('\n').map(l => l.trim()))
+  for (const line of wtRes.raw.split('\n').map(l => l.trim()))
     if (/^(UNIGNORED|SKIPPED_EXISTS|SKIPPED_ERROR):/.test(line))
       log(`${item.id}: secrets ${line.replace(/\t/g, ' ')}`)
 
@@ -678,7 +753,7 @@ const buildItem = async item => {
     }
   }
 
-  const commit = await commitItem(wt, item.id, item.title,
+  const commit = await commitItem(wt, item.id, item.title, baseSha,
     item.files.length ? [`Files it owns: ${item.files.join(', ')}`] : [])
 
   const merge = await serializedMerge(async () => {
@@ -699,83 +774,31 @@ const buildItem = async item => {
         .filter(Boolean).join('\n'),
       tuned('merge', { agentType: 'orca:merge', label: `merge:${item.id}`, phase: 'Merge', schema: MERGE })),
       `merge:${item.id}`)
-    // The merge agent's commit message is repo state its schema never returns —
-    // apply the same attribution backstop as commitItem. Inside the serialized
-    // section (an amend must never rewrite a commit a later merge builds on),
-    // and only on commits this merge created (tip moved), never pre-run history.
+    // The merge agent's commit message is repo state its schema never
+    // returns — one merge-finalize relay call applies the same attribution
+    // backstop as commit-verify (first-parent only: the item-branch commits
+    // merged in were already checked and cannot be rewritten from here),
+    // enforces the structural `merge <ID>:` join-key prefix audit relies
+    // on, and absorbs the worktree/branch cleanup — which thereby runs
+    // inside the serialized section: acceptable, it is fast git plumbing,
+    // and the verb preserves cleanup's non-fatality (a failed cleanup is
+    // reported in the frame with rc=0 and the merged outcome intact —
+    // a stray build artifact must never demote a merged item to blocked).
+    // The title rides the relay base64-encoded; the verb composes the safe
+    // subject itself (it needs the banned regex, whose one holder is lib.sh).
     if (m.merged) {
-      // --first-parent: only the commits the merge agent itself created on
-      // the integration branch — the item-branch commits it merged in were
-      // already checked by commitItem and cannot be rewritten from here.
-      // Tip and messages in one command; an unmoved tip yields an empty span.
-      const post = await shMarked(
-        `git -C "${integrationWt}" rev-parse HEAD ; echo "@@SPAN@@" ; ` +
-        `git -C "${integrationWt}" log --first-parent --format=%B "${tipBefore}..HEAD"`,
-        `merge-check:${item.id}`, 'Merge')
-      const [tipAfter, msgs] = post.split('@@SPAN@@').map(s => (s || '').trim())
-      // The rewrite subject keeps the structural `merge <ID>:` prefix —
-      // audit's join key — even on the attribution fallback path.
-      const safe = `merge ${item.id}: ${banned.test(item.title) ? `work item ${item.id}` : item.title}`
-      if (tipAfter !== tipBefore && banned.test(msgs)) {
-        const belowTip = await shMarked(
-          `git -C "${integrationWt}" log --first-parent --skip=1 --format=%B "${tipBefore}..HEAD"`,
-          `merge-below-tip:${item.id}`, 'Merge')
-        if (!banned.test(belowTip)) {
-          // Only the tip is banned — amend keeps the merge parents intact.
-          await sh(`git -C "${integrationWt}" commit --amend -m '${sq(safe)}'`, `merge-amend:${item.id}`, 'Merge')
-        } else {
-          // A banned message below the tip (a post-merge fix commit sits on
-          // top of it) cannot be amended away. Squash the span into one
-          // clean commit: content and the attribution guarantee are kept,
-          // only the merge topology is given up.
-          await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${sq(safe)}'`,
-                   `merge-squash:${item.id}`, 'Merge')
-        }
-      }
-      // Structural join-key guarantee: audit finds an item's merge by the
-      // `merge <ID>:` subject prefix on the first-parent log — guaranteed
-      // here by the deterministic layer, never by prompt compliance. Read
-      // the tip fresh (the attribution backstop may just have rewritten it).
-      if (tipAfter !== tipBefore) {
-        const prefix = `merge ${item.id}:`
-        const info = await shMarked(
-          `git -C "${integrationWt}" log -1 --format='%P%x09%s' ; echo "@@MS@@" ; ` +
-          `git -C "${integrationWt}" log --first-parent --merges --format=%s "${tipBefore}..HEAD" | tail -1 ; echo "@@MS_END@@" ; ` +
-          `git -C "${integrationWt}" log -1 --format=%b`,
-          `merge-subject:${item.id}`, 'Merge')
-        const [tipLine, mergeSubjRaw, tipBody] = info.split(/@@MS(?:_END)?@@/).map(s => (s || '').trim())
-        const [tipParents = '', tipSubj = ''] = tipLine.split('\t')
-        const mergeSubj = mergeSubjRaw || tipSubj
-        if (!mergeSubj.startsWith(prefix)) {
-          if (tipParents.includes(' ') && tipSubj === mergeSubj) {
-            // The merge commit is the tip: prepend the prefix, keep the
-            // agent's wording and the body's run-level decision bullets.
-            const bodyArg = tipBody ? ` -m '${sq(tipBody)}'` : ''
-            await sh(`git -C "${integrationWt}" commit --amend -m '${sq(`${prefix} ${mergeSubj}`)}'${bodyArg}`,
-                     `merge-subject-amend:${item.id}`, 'Merge')
-          } else {
-            // The wrong-subject merge sits below later commits — squash the
-            // span behind the guaranteed subject (same trade as the
-            // attribution fallback: content kept, topology given up).
-            await sh(`git -C "${integrationWt}" reset --soft ${tipBefore} && git -C "${integrationWt}" commit -m '${sq(safe)}'`,
-                     `merge-subject-squash:${item.id}`, 'Merge')
-          }
-          log(`${item.id}: merge subject rewritten to carry the required "${prefix}" prefix`)
-        }
-      }
+      const fin = await verb(
+        `merge-finalize "${integrationWt}" ${tipBefore} ${item.id} ` +
+        `--title-b64 ${b64encode(item.title)} --wt "${wt}" --branch "${branch}"`,
+        MERGE_FINALIZE_KEYS, `merge-finalize:${item.id}`, 'Merge')
+      if (fin.frame.subject === 'amended' || fin.frame.subject === 'squashed')
+        log(`${item.id}: merge subject rewritten to carry the required "merge ${item.id}:" prefix`)
+      if (fin.frame.cleanup === 'failed')
+        log(`${item.id}: worktree cleanup failed (non-fatal)`)
     }
     return m
   })
   if (!merge.merged) throw specRooted(`merge aborted: ${merge.detail}`)
-
-  // Cleanup is best-effort: the item is already merged, so a dirty worktree
-  // (stray build output) must never demote it to blocked.
-  try {
-    await sh(`git -C "${integrationWt}" worktree remove --force "${wt}" && git -C "${integrationWt}" branch -D "${branch}"`,
-             `cleanup:${item.id}`, 'Merge')
-  } catch (err) {
-    log(`${item.id}: worktree cleanup failed (non-fatal): ${String((err && err.message) || err)}`)
-  }
   return commit
 }
 
@@ -982,7 +1005,8 @@ const runWave = async wave => {
 // merged-path cleanup: a failure here logs and never demotes or re-throws,
 // and an unfinished salvage leaves the worktree in place rather than
 // removing unsaved work. The WIP message is deterministic and passes the
-// `banned` regex; commitItem rewrites it if it ever surfaces as a tip.
+// banned-attribution regex; commit-verify rewrites it if it ever
+// surfaces as a tip.
 const salvageWorktree = async item => {
   const wt = `${repoRoot}/orca-${slug}-${item.id}`
   try {
@@ -1201,11 +1225,18 @@ if (shipped.length) {
     }
     if (reviewedClean) {
       try {
-        const status = await sh(
-          `[ -n "$(git -C "${integrationWt}" status --porcelain)" ] && echo DIRTY || echo CLEAN`,
+        // The probe also emits the integration head: commit-verify's base
+        // must be captured before the commit agent runs (the same ordering
+        // logic as the tip-before read), and the probe is an existing relay
+        // call, so the sha rides free.
+        const status = await shMarked(
+          `{ [ -n "$(git -C "${integrationWt}" status --porcelain)" ] && echo DIRTY || echo CLEAN ; } ; ` +
+          `git -C "${integrationWt}" rev-parse HEAD`,
           'integration-status', 'Merge')
-        if (status.includes('DIRTY')) {
+        const [flag, intBase] = status.split('\n').map(s => s.trim())
+        if (flag === 'DIRTY') {
           const c = await commitItem(integrationWt, 'integration', 'integration fixes from full-feature verification',
+            mustSha(intBase, 'integration-status'),
             ['There is no plan file for this item; commit the integration fixes only.'])
           log(`integration fixes committed (${c.hash})`)
         }

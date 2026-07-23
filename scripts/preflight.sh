@@ -53,6 +53,26 @@ else
   echo "TRUNK_CANDIDATE: ${trunk:-unknown}"
 fi
 
+# --- PLUGIN_ROOT: the plugin-shipped CLI must exist beside this script ---
+# The work loop's worktree/commit/merge rituals run through scripts/orca.sh;
+# a missing dispatcher means "can't commit anything", discovered at minute
+# forty — refuse at minute zero instead (typed NO_PLUGIN_ROOT). Self-derived
+# via BASH_SOURCE: no PLUGIN_ROOT variable exists in here — callers expand
+# ${CLAUDE_PLUGIN_ROOT} in their own shell, and under set -u referencing an
+# unset variable would die unbound and untyped, the exact failure shape this
+# check exists to prevent. test -f, not -x: every invocation is
+# `bash .../orca.sh`, so the exec bit is never needed and must not be relied
+# on to survive plugin installation. The workflow's own non-empty-argument
+# assert covers the other failure mode (the launcher never passed
+# pluginRoot); the two are complementary, not redundant.
+plugin_scripts_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$plugin_scripts_dir/orca.sh" ]]; then
+  echo "PLUGIN_ROOT: PASS"
+else
+  echo "PLUGIN_ROOT: FAIL: NO_PLUGIN_ROOT — scripts/orca.sh is not beside preflight.sh; reinstall the orca plugin"
+  fail=1
+fi
+
 # Path resolution from git, never CWD: the repo root (common-dir parent)
 # holds .orca/, and the worktree top level (when inside one) holds the
 # project .claude/ settings. Both empty outside a repo — the relative

@@ -212,7 +212,7 @@ Workflow({
     items: [ { id: "W1", title: "…", deps: [], files: ["…"], taskId: "…" }, … ],  // verbatim from the spec's Work Breakdown, plus each item's status-task id
     reviewer: "<codex|claude>",  // the resolved reviewer held since Step 2 — always present
     agents: { … },  // only when the block held since Step 2 is non-empty — passed verbatim
-    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — the loop runs secrets.sh place after every worktree add
+    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — REQUIRED: the loop's worktree/commit/merge rituals run through the plugin-shipped CLI (scripts/orca.sh); a missing value refuses launch typed (NO_PLUGIN_ROOT)
   }
 })
 ```

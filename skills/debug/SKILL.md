@@ -120,7 +120,7 @@ Workflow({
     reviewer: "<codex|claude>",   // the resolved reviewer held since Step 1 — always present
     agents: { … },                // only when the held block is non-empty — passed verbatim
     fixTaskId: "<id>",            // only when the fix status task was created
-    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — the loops run secrets.sh place after every worktree add
+    pluginRoot: "${CLAUDE_PLUGIN_ROOT}"  // the substituted absolute path — REQUIRED by the nested work loop, whose worktree/commit/merge rituals run through the plugin-shipped CLI (scripts/orca.sh); a missing value refuses that launch typed (NO_PLUGIN_ROOT)
   }
 })
 ```
