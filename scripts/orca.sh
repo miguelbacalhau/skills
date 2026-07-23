@@ -26,12 +26,16 @@ verb="${1:-}"
 [ $# -gt 0 ] && shift
 
 case "$verb" in
+  commit-verify|merge-finalize|worktree-item)
+    # shellcheck disable=SC1090
+    source "$orca_scripts_dir/verbs/$verb.sh"
+    ;;
   self-test)
     # Smoke verb: proves dispatch, lib loading, and the frame path
     # end-to-end without touching a repository.
     emit_frame rc=0 verb=self-test "probe.b64=$(b64_encode_str 'orca self-test')"
     ;;
   *)
-    fail UNKNOWN_VERB "unknown verb '${verb}' — usage: orca.sh <verb> [args...]; verbs: self-test"
+    fail UNKNOWN_VERB "unknown verb '${verb}' — usage: orca.sh <verb> [args...]; verbs: commit-verify, merge-finalize, worktree-item, self-test"
     ;;
 esac
