@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 #
 # orca secrets — the sole writer of the placement symlinks that carry
 # <repo-root>/.orca/secrets/ into worktrees. `git worktree add` materializes
@@ -14,8 +14,8 @@
 # the repo root moving — worktrees and .orca/ move together.
 #
 # Usage:
-#   secrets.sh place <worktree>
-#   secrets.sh remove <worktree>
+#   orca.sh secrets place <worktree>
+#   orca.sh secrets remove <worktree>
 #
 # remove is place's inverse, for least-privilege staging: the loops strip
 # placement links from a worktree before stages that consume adversarial
@@ -55,12 +55,9 @@
 # property: a path `git check-ignore` does not report ignored (tracked
 # paths included — check-ignore consults the index) is a path a commit
 # could pick up, so it never receives a secret.
-
-set -uo pipefail
-
-# fail() and the symlink canonicalizer come from the shared lib.
-# shellcheck source=lib.sh disable=SC1091
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib.sh"
+#
+# Sourced by orca.sh with the verb arguments in place; lib.sh (fail()
+# and the symlink canonicalizer) is already loaded.
 
 mode="${1:-}"
 [[ ( "$mode" == "place" || "$mode" == "remove" ) && $# -eq 2 ]] \

@@ -74,7 +74,7 @@ rm -f "$wti_errlog"
 
 # Placement's typed lines (LINKED/UNIGNORED/SKIPPED_*) pass through;
 # its own misuse FAIL line is the typed failure, so no re-wrapping.
-bash "$orca_scripts_dir/secrets.sh" place "$wti_wt" || exit 1
+bash "$orca_scripts_dir/orca.sh" secrets place "$wti_wt" || exit 1
 
 wti_head="$(git -C "$wti_wt" rev-parse HEAD)" \
   || fail GIT_ERROR "could not read HEAD in $wti_wt"

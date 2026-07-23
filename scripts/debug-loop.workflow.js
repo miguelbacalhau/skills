@@ -48,7 +48,7 @@
 //                script has no environment to resolve it from). The
 //                per-hypothesis worktree ritual runs through the
 //                plugin-shipped CLI (scripts/orca.sh, which chains
-//                secrets.sh place), and the nested work loop receives the
+//                its secrets verb), and the nested work loop receives the
 //                value verbatim — it refuses launch without it — so a
 //                missing plugin root refuses HERE, typed (NO_PLUGIN_ROOT),
 //                not at the Fix phase an hour in

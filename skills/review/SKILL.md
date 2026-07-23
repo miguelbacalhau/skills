@@ -28,7 +28,7 @@ Exit 1 with a typed `FAIL:` (`NOT_GIT`, `NOT_BARE`) means there is nothing to re
 
   ```bash
   git worktree add <worktree> <branch>
-  bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <worktree>
+  bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh secrets place <worktree>
   ```
 
   then re-run `discover` to pick up the path. The `place` call links the user's secrets (`.orca/secrets/`, the mirror-tree convention) into the fresh worktree as relative symlinks — part of the same consent as the add, and best-effort: typed skips (`UNIGNORED:`, `SKIPPED_EXISTS:`) are worth a mention, never a stop.

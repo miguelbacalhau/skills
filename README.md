@@ -366,12 +366,12 @@ Each file is placed as a **relative symlink**, so every worktree reads the one c
 Populating the tree is yours to do, by hand — one `mv` per secret: on a fresh clone, drop files in as you obtain them; on a repo `/orca:init` converted, move the `.env`s the conversion preserved in your worktree (`mkdir -p .orca/secrets/apps/api && mv main/apps/api/.env .orca/secrets/apps/api/.env`). Runs place into every worktree **they** create and never write into yours — link your own worktree to the canonical files yourself, by hand (`ln -s ../.orca/secrets/.env main/.env`) or with the same script the runs use, safe on any worktree:
 
 ```bash
-bash <plugin-root>/scripts/secrets.sh place <repo-root>/main
+bash <plugin-root>/scripts/orca.sh secrets place <repo-root>/main
 ```
 
 Two carve-outs to the usual `.orca/` story. Unlike `map.md` and `decisions.md`, **`secrets/` is not a rebuildable cache — deleting it is data loss**; it is exactly the thing to leave out of any `.orca/` cleanup. And placed secrets are readable by the stage agents whose work needs them — so keep **development** credentials here, never production ones.
 
-Placement is least-privilege by stage: links go in where the work actually needs credentials (implement, fix, integrate, reproduce — builds, tests, repro scripts) and are stripped (`secrets.sh remove`, the resolved-target ownership test) before every independent review, the stage that consumes the run's most adversarial content and needs none. With the codex reviewer that separation also keeps secret values away from a different model provider. The recommendation compounds: keep the tree down to what runs actually need — every extra credential in `.orca/secrets/` widens the blast radius of any one compromised stage.
+Placement is least-privilege by stage: links go in where the work actually needs credentials (implement, fix, integrate, reproduce — builds, tests, repro scripts) and are stripped (`orca.sh secrets remove`, the resolved-target ownership test) before every independent review, the stage that consumes the run's most adversarial content and needs none. With the codex reviewer that separation also keeps secret values away from a different model provider. The recommendation compounds: keep the tree down to what runs actually need — every extra credential in `.orca/secrets/` widens the blast radius of any one compromised stage.
 
 ## Project context
 
@@ -535,7 +535,7 @@ This repository previously shipped the same workflow as symlink-installed skills
 | `scripts/triage.sh` | Read-only discovery spine — interrupted/unlaunched runs with byte-exact resume handles, queued briefs, open cases (`discover`), and the git-footprint join for `/orca:status` (`status`). |
 | `scripts/init-convert.sh` | The mechanical core of `/orca:init`'s conventional-to-bare conversion — gates, NUL-safe untracked moves, crash journal with signal traps, `recover`, and the manifest-checked `cleanup`. |
 | `scripts/review.sh` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
-| `scripts/secrets.sh` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
+| `scripts/orca.sh secrets` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
 | `agents/` | The seventeen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context; `audit` reconciles a finished run for `/orca:retry` and `/orca:followup`). |

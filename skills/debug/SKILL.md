@@ -91,9 +91,9 @@ Create the run's worktrees at the repo root, branched from the confirmed trunk's
 
 ```bash
 git worktree add <repo-root>/orca-bug-<slug> -b bug/<slug> <trunk-branch>          # always: the case worktree
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-bug-<slug>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh secrets place <repo-root>/orca-bug-<slug>
 git worktree add <repo-root>/orca-fix-<slug> -b fix/<slug> <trunk-branch>          # diagnose-and-fix only: the fix integration worktree
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-fix-<slug>    # diagnose-and-fix only
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh secrets place <repo-root>/orca-fix-<slug>    # diagnose-and-fix only
 ```
 
 Each `place` links the user's secrets (`<repo-root>/.orca/secrets/`, the mirror-tree convention — the README documents it) into the fresh worktree as relative symlinks, so the repro and the fix's builds find their `.env`s. Idempotent and best-effort: a missing or empty secrets tree is a clean `OK` no-op, per-file problems are typed skips — relay any `UNIGNORED:` or `SKIPPED_EXISTS:` lines as one-way status, never a reason to stop.

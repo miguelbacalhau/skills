@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# secrets.sh — placement gates, idempotency, dangling-link sweep boundaries.
+# orca.sh secrets — placement gates, idempotency, dangling-link sweep boundaries.
 
 load helpers
 
@@ -7,7 +7,7 @@ load helpers
 # ownership resolution is the lib's pure-bash canonicalizer, and any
 # python3 call is an envelope regression that fails loudly.
 secrets() {
-  bash "$SCRIPTS/secrets.sh" "$@"
+  bash "$SCRIPTS/orca.sh" secrets "$@"
 }
 
 # make_bare_layout comes from helpers.bash; these tests add the secrets

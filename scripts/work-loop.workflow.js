@@ -47,8 +47,8 @@
 //                     (the launching skill substitutes ${CLAUDE_PLUGIN_ROOT}
 //                     — this script has no environment to resolve it from).
 //                     The worktree/commit/merge rituals run through the
-//                     plugin-shipped CLI (scripts/orca.sh), and secrets.sh
-//                     place runs after every worktree add — a missing plugin
+//                     plugin-shipped CLI (scripts/orca.sh), and its secrets
+//                     verb runs after every worktree add — a missing plugin
 //                     root means "can't commit anything", so the launch
 //                     refuses typed (NO_PLUGIN_ROOT) instead of failing at
 //                     minute forty. preflight.sh verifies the dispatcher
@@ -540,7 +540,7 @@ const reviewAgentType = reviewer === 'codex' ? 'orca:review-codex' : 'orca:revie
 // skill's placement) re-place. Best-effort both ways — a failed
 // place/remove degrades privilege separation, never the run.
 const secretsStage = async (mode, wt, label) => {
-  try { await sh(`bash "${pluginRoot}/scripts/secrets.sh" ${mode} "${wt}"`, label, 'Review') }
+  try { await sh(`bash "${pluginRoot}/scripts/orca.sh" secrets ${mode} "${wt}"`, label, 'Review') }
   catch (err) { log(`secrets ${mode} failed (non-fatal) for ${wt}: ${String((err && err.message) || err)}`) }
 }
 

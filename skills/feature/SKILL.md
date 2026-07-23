@@ -168,7 +168,7 @@ Create the integration worktree at the repo root, on a fresh branch. The base is
 
 ```bash
 git worktree add <repo-root>/orca-<slug> -b feature/<slug> <base-branch, or the trunk when the brief names none>
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/secrets.sh place <repo-root>/orca-<slug>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh secrets place <repo-root>/orca-<slug>
 ```
 
 The branch is `feature/<slug>` — a neutral namespace that reads as ordinary dev work on GitHub and leaves no orca trace in git history; the slug keeps it collision-unlikely. In the no-base case, `worktree add -b` fails loudly if `feature/<slug>` already exists, never silently reusing it — if it does, pick a different slug and retry rather than reusing the existing branch. (With a `**Base branch:**`, the new branch name must still be fresh — the same rule applies to it, not to the base.)
