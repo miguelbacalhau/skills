@@ -530,18 +530,34 @@ This repository previously shipped the same workflow as symlink-installed skills
 | `.mcp.json` | Bundled codex MCP server registration — the global PATH `codex` binary, never npm. |
 | `skills/feature/`, `skills/debug/`, `skills/review/`, `skills/retry/`, `skills/followup/`, `skills/status/`, `skills/init/`, `skills/doctor/`, `skills/config/` | The nine skills. |
 | `skills/feature/interview.md`, `skills/debug/interview.md` | The interview instructions, loaded only when a verb's triage lands on a new interview. |
-| `scripts/orca.sh preflight` | Read-only environment validation — the gate lines above. |
-| `scripts/orca.sh config` | Sole reader/writer of `.orca/config` — parse, validation, merge semantics, atomic canonical writes (over `lib.sh`'s shared machinery); the grep-readers in the preflight and review verbs lean on its sole-writer guarantee. |
-| `scripts/orca.sh triage` | Read-only discovery spine — interrupted/unlaunched runs with byte-exact resume handles, queued briefs, open cases (`discover`), and the git-footprint join for `/orca:status` (`status`). |
-| `scripts/orca.sh init-convert` | The mechanical core of `/orca:init`'s conventional-to-bare conversion — gates, NUL-safe untracked moves, crash journal with signal traps, `recover`, and the manifest-checked `cleanup`. |
-| `scripts/orca.sh review` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
-| `scripts/orca.sh secrets` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
+| `scripts/orca.sh`, `scripts/lib.sh`, `scripts/verbs/` | The orca CLI — the plugin's entire shell surface behind one invocation shape (see [The orca CLI](#the-orca-cli) below): a case-statement dispatcher, the shared lib (typed failures, framed output, base64 relay encoding, repository resolution, the config parser/writer, the banned-attribution regex), and one sourced file per verb. |
 | `scripts/work-loop.workflow.js` | The deterministic feature work loop, run through the Workflow tool — also nested by debug runs for the fix tail. |
 | `scripts/debug-loop.workflow.js` | The deterministic debug loop: repro gate, hypothesis fan-out, verification, diagnosis, nested fix, repro check. |
 | `agents/` | The seventeen stage agents, loaded as `orca:<stage>` (the reviewers are `review-codex` and `review-claude`; the debug stages are `reproduce`, `hypothesize`, `verify`, `diagnose`; `context` maintains the project context; `audit` reconciles a finished run for `/orca:retry` and `/orca:followup`). |
 | `.github/workflows/version-bump.yml`, `.github/scripts/version-bump.sh` | Version-bump guard, run by GitHub Actions on every push to main: if shipped files (`skills/`, `agents/`, `scripts/`, `.claude-plugin/`, `.mcp.json`) changed since the commit that introduced the current manifest version, the action commits a bump to main — sized by Conventional Commits across the uncovered range (`!`/`BREAKING CHANGE` → major, `feat` → minor, else patch). The plugin updater keys its install cache on that version, so an unbumped push makes updates silently serve stale code. The check is stateless, so a missed run self-heals on the next push; a manual bump of any size covers the changes that land with it. Pull after pushing shipped changes to pick up the bot's bump commit. |
 | [orca.nvim](https://github.com/miguelbacalhau/orca.nvim) *(separate repository)* | The Neovim companion: `:OrcaReview` reviews a branch's merge-base diff in your own editor — opened by `/orca:review`. Dependency-free, installs like any plugin; `/orca:doctor` checks it and prescribes the install. |
 | [orca.vscode](https://github.com/miguelbacalhau/orca.vscode) *(separate repository)* | The VS Code companion: an "Orca: Review" session walks the same merge-base diff — one native diff at a time, ✓ checkboxes in the Source Control sidebar — opened by `/orca:review` via `code --open-url`. Installed from the release VSIX; `/orca:doctor` checks it and prescribes the install. |
+
+## The orca CLI
+
+Every deterministic operation the plugin performs in a shell goes through one dispatcher:
+
+```bash
+bash <plugin-root>/scripts/orca.sh <verb> [args...]
+```
+
+That single invocation shape is the point: **one allowlist entry — `bash */scripts/orca.sh *` — is the only permission orca's shell surface ever needs**, and it covers every verb, including ones added by future plugin versions. (Users upgrading from versions that shipped standalone scripts will see one final round of permission prompts; it is the last such round.)
+
+| Verb | What it does |
+|---|---|
+| `preflight` | Read-only environment validation — the gate lines above. |
+| `config show\|validate\|set\|clear\|reset` | Sole reader/writer of `.orca/config` — parse, validation, merge semantics, atomic canonical writes (over `lib.sh`'s shared machinery); the grep-readers in the preflight and review verbs lean on its sole-writer guarantee. |
+| `triage discover\|status` | Read-only discovery spine — interrupted/unlaunched runs with byte-exact resume handles, queued briefs, open cases (`discover`), and the git-footprint join for `/orca:status` (`status`). |
+| `init-convert check\|convert\|cleanup\|recover` | The mechanical core of `/orca:init`'s conventional-to-bare conversion — gates, NUL-safe untracked moves, crash journal with signal traps, `recover`, and the manifest-checked `cleanup`. |
+| `review discover\|open\|probe\|wait\|notes` | The deterministic spine of `/orca:review` — deliverable discovery, editor/terminal resolution, probes, and the launch; the skill converses, the script executes. |
+| `secrets place\|remove` | Links `.orca/secrets/` (the mirror-tree secrets convention) into a worktree as relative symlinks — run by the loops and skills after every `worktree add`, and runnable by hand on your own worktree. |
+| `worktree-item`, `commit-verify`, `merge-finalize` | The relay verbs the work loops spawn per item: the whole worktree-arrival ritual, the commit decision table, and merge finalization — results reported through the `@@ORCA@@` frame. |
+| `self-test` | Smoke verb — proves dispatch, lib loading, and the frame path without touching a repository. |
 
 ## License
 
