@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 #
 # orca review — the deterministic spine of /orca:review: deliverable
 # discovery, editor/terminal resolution, probes, and the launch. The
@@ -6,11 +6,11 @@
 # the parting message); this script owns the plumbing.
 #
 # Usage:
-#   review.sh discover
-#   review.sh open <worktree>
-#   review.sh probe <nvim|vscode>
-#   review.sh wait <window-id>
-#   review.sh notes <worktree>
+#   orca.sh review discover
+#   orca.sh review open <worktree>
+#   orca.sh review probe <nvim|vscode>
+#   orca.sh review wait <window-id>
+#   orca.sh review notes <worktree>
 #
 # Output contract — one machine-readable line per fact, fields
 # TAB-separated (worktree paths may contain spaces):
@@ -88,10 +88,13 @@
 #
 # Extraction is grep-only by design: orca:config (via lib.sh) is the sole
 # writer and only ever writes canonical one-key-per-line key=value.
+#
+# Sourced by orca.sh (orca.sh review ...); the lib is loaded but this
+# verb keeps its own internal helpers, renamed review_* where they
+# would collide with lib.sh's fail()/resolve_repo() (its typed details
+# and the NOT_BARE/NO_TRUNK gates differ from the lib's).
 
-set -uo pipefail
-
-fail() { # <reason> <detail> — typed failure, exit 1, nothing launched
+review_fail() { # <reason> <detail> — typed failure, exit 1, nothing launched
   printf 'FAIL:\t%s\t%s\n' "$1" "$2"
   exit 1
 }
@@ -124,26 +127,26 @@ urlencode() {
 }
 
 # Resolve common_dir / repo_root / trunk; typed FAIL outside the bare layout.
-resolve_repo() {
+review_resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   # An empty result can mean old git, not no-git: --path-format needs
   # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
   # wrong problem.
   if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+    review_fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
   fi
   if [[ -z "$common_dir" ]]; then
-    fail NOT_GIT "not inside a git repository — nothing to review (orca:init sets up the layout)"
+    review_fail NOT_GIT "not inside a git repository — nothing to review (orca:init sets up the layout)"
   fi
   local is_bare
   is_bare="$(git --git-dir="$common_dir" rev-parse --is-bare-repository 2>/dev/null || true)"
   if [[ "$is_bare" != "true" ]]; then
-    fail NOT_BARE "conventional checkout, not bare-with-worktrees (orca:init converts)"
+    review_fail NOT_BARE "conventional checkout, not bare-with-worktrees (orca:init converts)"
   fi
   repo_root="$(dirname "$common_dir")"
   trunk="$(git --git-dir="$common_dir" symbolic-ref --short HEAD 2>/dev/null || true)"
   if [[ -z "$trunk" ]]; then
-    fail NO_TRUNK "the bare repo's HEAD names no branch — cannot resolve the trunk"
+    review_fail NO_TRUNK "the bare repo's HEAD names no branch — cannot resolve the trunk"
   fi
 }
 
@@ -176,7 +179,7 @@ read_config_key() {
 # comments. Tracked as a cross-repo change.
 notes_key() { printf '%s' "$1" | tr -c 'A-Za-z0-9._-' '-'; }
 
-notes_path_for_branch() { # <branch> — requires resolve_repo to have run
+notes_path_for_branch() { # <branch> — requires review_resolve_repo to have run
   printf '%s/.orca/review-notes/%s.json' "$repo_root" "$(notes_key "$1")"
 }
 
@@ -232,7 +235,7 @@ probe_vscode() {
 }
 
 cmd_discover() {
-  resolve_repo
+  review_resolve_repo
   printf 'TRUNK:\t%s\n' "$trunk"
 
   # An unborn trunk (bare repo, no commits yet) means no run ever produced
@@ -298,11 +301,11 @@ cmd_discover() {
 cmd_open() {
   local worktree="${1:-}"
   if [[ -z "$worktree" ]]; then
-    fail BAD_ARGS "usage: review.sh open <worktree>"
+    review_fail BAD_ARGS "usage: review.sh open <worktree>"
   fi
-  resolve_repo
+  review_resolve_repo
   if [[ ! -d "$worktree" ]]; then
-    fail NO_SUCH_WORKTREE "$worktree is not a directory — re-run discover (a missing deliverable needs its worktree re-added first)"
+    review_fail NO_SUCH_WORKTREE "$worktree is not a directory — re-run discover (a missing deliverable needs its worktree re-added first)"
   fi
 
   # Where :OrcaComment will persist review comments — emitted before the
@@ -323,11 +326,11 @@ cmd_open() {
   # --- editor: absent -> detect (nvim, then vscode), pinned -> loud fail, none -> opt out ---
   local editor probe_detail=""
   if ! editor="$(read_config_key editor)"; then
-    fail UNKNOWN_VALUE "multiple conflicting editor values in .orca/config — fix with orca:config"
+    review_fail UNKNOWN_VALUE "multiple conflicting editor values in .orca/config — fix with orca:config"
   fi
   case "$editor" in
     nvim|vscode|none|"") ;;
-    *) fail UNKNOWN_VALUE "editor=$editor — allowed values: nvim, vscode, none (orca:config)" ;;
+    *) review_fail UNKNOWN_VALUE "editor=$editor — allowed values: nvim, vscode, none (orca:config)" ;;
   esac
 
   if [[ "$editor" == "none" ]]; then
@@ -338,9 +341,9 @@ cmd_open() {
   if [[ -n "$editor" ]]; then
     resolved="$editor"
     if [[ "$editor" == "nvim" ]]; then
-      probe_nvim || fail PINNED_PROBE_FAILED "editor=nvim pinned but $probe_detail — orca:doctor prescribes the fix"
+      probe_nvim || review_fail PINNED_PROBE_FAILED "editor=nvim pinned but $probe_detail — orca:doctor prescribes the fix"
     else
-      probe_vscode || fail PINNED_PROBE_FAILED "editor=vscode pinned but $probe_detail — orca:doctor prescribes the fix"
+      probe_vscode || review_fail PINNED_PROBE_FAILED "editor=vscode pinned but $probe_detail — orca:doctor prescribes the fix"
     fi
   elif probe_nvim; then
     resolved="nvim"
@@ -361,18 +364,18 @@ cmd_open() {
     # --- terminal: consulted only for nvim — the vscode launch is a detached GUI ---
     local terminal
     if ! terminal="$(read_config_key terminal)"; then
-      fail UNKNOWN_VALUE "multiple conflicting terminal values in .orca/config — fix with orca:config"
+      review_fail UNKNOWN_VALUE "multiple conflicting terminal values in .orca/config — fix with orca:config"
     fi
     case "$terminal" in
       tmux|none|"") ;;
-      *) fail UNKNOWN_VALUE "terminal=$terminal — allowed values: tmux, none (orca:config)" ;;
+      *) review_fail UNKNOWN_VALUE "terminal=$terminal — allowed values: tmux, none (orca:config)" ;;
     esac
     if [[ "$terminal" == "none" ]]; then
       print_only TERMINAL_NONE "terminal=none — printing the command instead" "$nvim_cmd"
     fi
     if [[ -z "${TMUX:-}" ]]; then
       if [[ "$terminal" == "tmux" ]]; then
-        fail PINNED_TERMINAL_UNSET "terminal=tmux pinned but \$TMUX is unset — start claude inside tmux, or unpin terminal via orca:config"
+        review_fail PINNED_TERMINAL_UNSET "terminal=tmux pinned but \$TMUX is unset — start claude inside tmux, or unpin terminal via orca:config"
       fi
       print_only NO_TMUX "nvim usable but \$TMUX is unset — no tmux session to open a window in" "$nvim_cmd"
     fi
@@ -398,14 +401,14 @@ cmd_open() {
   print_only VSCODE_LAUNCH_FAILED "code --open-url failed — after opening, run \"Orca: Review\" from the palette" "cd $(shq "$worktree") && code ."
 }
 
-# Machine-level, deliberately outside resolve_repo: the probes are what
+# Machine-level, deliberately outside review_resolve_repo: the probes are what
 # orca:doctor's install checks run, machine-only mode included.
 cmd_probe() {
   local tier="${1:-}" probe_detail=""
   case "$tier" in
     nvim)   probe_nvim   && { printf 'PROBE_OK:\tnvim\n'; exit 0; } ;;
     vscode) probe_vscode && { printf 'PROBE_OK:\tvscode\n'; exit 0; } ;;
-    *)      fail BAD_ARGS "usage: review.sh probe <nvim|vscode>" ;;
+    *)      review_fail BAD_ARGS "usage: review.sh probe <nvim|vscode>" ;;
   esac
   printf 'PROBE_FAILED:\t%s\t%s\n' "$tier" "$probe_detail"
   exit 1
@@ -427,7 +430,7 @@ window_alive() {
 cmd_wait() {
   local win="${1:-}"
   if [[ -z "$win" ]]; then
-    fail BAD_ARGS "usage: review.sh wait <window-id>"
+    review_fail BAD_ARGS "usage: review.sh wait <window-id>"
   fi
   while window_alive "$win"; do
     sleep 5
@@ -439,16 +442,16 @@ cmd_wait() {
 cmd_notes() {
   local worktree="${1:-}"
   if [[ -z "$worktree" ]]; then
-    fail BAD_ARGS "usage: review.sh notes <worktree>"
+    review_fail BAD_ARGS "usage: review.sh notes <worktree>"
   fi
-  resolve_repo
+  review_resolve_repo
   if [[ ! -d "$worktree" ]]; then
-    fail NO_SUCH_WORKTREE "$worktree is not a directory — re-run discover"
+    review_fail NO_SUCH_WORKTREE "$worktree is not a directory — re-run discover"
   fi
   local head_branch
   head_branch="$(git -C "$worktree" symbolic-ref --short HEAD 2>/dev/null || true)"
   if [[ -z "$head_branch" ]]; then
-    fail NO_BRANCH "$worktree's HEAD names no branch — cannot derive the review-notes key"
+    review_fail NO_BRANCH "$worktree's HEAD names no branch — cannot derive the review-notes key"
   fi
   emit_notes_line "$(notes_path_for_branch "$head_branch")" || exit 1
   exit 0
@@ -460,5 +463,5 @@ case "${1:-}" in
   probe)    shift; cmd_probe "$@" ;;
   wait)     shift; cmd_wait "$@" ;;
   notes)    shift; cmd_notes "$@" ;;
-  *)        fail BAD_ARGS "usage: review.sh discover | review.sh open <worktree> | review.sh probe <nvim|vscode> | review.sh wait <window-id> | review.sh notes <worktree>" ;;
+  *)        review_fail BAD_ARGS "usage: review.sh discover | review.sh open <worktree> | review.sh probe <nvim|vscode> | review.sh wait <window-id> | review.sh notes <worktree>" ;;
 esac

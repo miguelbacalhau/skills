@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# review.sh — deliverable discovery, review-notes counting, key sanitization.
+# orca.sh review — deliverable discovery, review-notes counting, key sanitization.
 
 load helpers
 
@@ -17,7 +17,7 @@ make_deliverable() { # <dir>
 @test "discover on a fresh layout lists the trunk and nothing else" {
   make_bare_layout "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r/main"
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   has_line $'TRUNK:\tmain'
   refute_line 'DELIVERABLE:'
@@ -26,14 +26,14 @@ make_deliverable() { # <dir>
 @test "discover fails typed outside the bare layout" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   assert_fail_reason NOT_BARE
 }
 
 @test "an unmerged branch with a worktree is a deliverable, ok" {
   make_deliverable "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r/main"
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   has_line $'DELIVERABLE:\tfeature/foo\t'"$BATS_TEST_TMPDIR/r/orca-foo"$'\tok'
 }
@@ -43,7 +43,7 @@ make_deliverable() { # <dir>
   cd "$BATS_TEST_TMPDIR/r"
   git -C main worktree remove --force ../orca-foo
   cd main
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   has_line $'DELIVERABLE:\tfeature/foo\t'"$BATS_TEST_TMPDIR/r/orca-foo"$'\tmissing'
 }
@@ -52,7 +52,7 @@ make_deliverable() { # <dir>
   make_deliverable "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r/main"
   git branch feature/foo-W1 feature/foo
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   refute_line $'DELIVERABLE:\tfeature/foo-W1'
 }
@@ -64,7 +64,7 @@ make_deliverable() { # <dir>
   # feature/foo sanitizes to feature-foo — '/' is outside [A-Za-z0-9._-]
   printf '{"version":1,"comments":[{"status":"open"},{"status":"open"},{"status":"addressed"}]}\n' \
     >"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"
-  run bash "$SCRIPTS/review.sh" notes "$BATS_TEST_TMPDIR/r/orca-foo"
+  run bash "$SCRIPTS/orca.sh" review notes "$BATS_TEST_TMPDIR/r/orca-foo"
   [ "$status" -eq 0 ]
   has_line $'NOTES:\t'"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"$'\t2,1,0'
 }
@@ -72,7 +72,7 @@ make_deliverable() { # <dir>
 @test "notes with no file is NOTES_NONE" {
   make_deliverable "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r/main"
-  run bash "$SCRIPTS/review.sh" notes "$BATS_TEST_TMPDIR/r/orca-foo"
+  run bash "$SCRIPTS/orca.sh" review notes "$BATS_TEST_TMPDIR/r/orca-foo"
   [ "$status" -eq 0 ]
   has_line 'NOTES_NONE:'
 }
@@ -83,7 +83,7 @@ make_deliverable() { # <dir>
   mkdir -p "$BATS_TEST_TMPDIR/r/.orca/review-notes"
   printf '{"version":2,"comments":[{"status":"open"}]}\n' \
     >"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"
-  run bash "$SCRIPTS/review.sh" notes "$BATS_TEST_TMPDIR/r/orca-foo"
+  run bash "$SCRIPTS/orca.sh" review notes "$BATS_TEST_TMPDIR/r/orca-foo"
   [ "$status" -eq 1 ]
   has_line $'NOTES_VERSION:\t2\t1'
 }
@@ -94,7 +94,7 @@ make_deliverable() { # <dir>
   mkdir -p "$BATS_TEST_TMPDIR/r/.orca/review-notes"
   printf '{"version":1,"comments":[{"status":"open"}]}\n' \
     >"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   has_line $'NOTES:\t'"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"$'\t1,0,0'
 }
@@ -105,7 +105,7 @@ make_deliverable() { # <dir>
   mkdir -p "$BATS_TEST_TMPDIR/r/.orca/review-notes"
   printf '{"version":1,"comments":[{"status":"answered"}]}\n' \
     >"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"
-  run bash "$SCRIPTS/review.sh" discover
+  run bash "$SCRIPTS/orca.sh" review discover
   [ "$status" -eq 0 ]
   refute_line 'NOTES:'
 }
@@ -118,7 +118,7 @@ make_deliverable() { # <dir>
   # cannot appear in a body the sole writer (vim.json.encode) produced
   printf '{"version":1,"comments":[{"status":"answered","body":"try \\"status\\":\\"open\\" here"}]}\n' \
     >"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"
-  run bash "$SCRIPTS/review.sh" notes "$BATS_TEST_TMPDIR/r/orca-foo"
+  run bash "$SCRIPTS/orca.sh" review notes "$BATS_TEST_TMPDIR/r/orca-foo"
   [ "$status" -eq 0 ]
   has_line $'NOTES:\t'"$BATS_TEST_TMPDIR/r/.orca/review-notes/feature-foo.json"$'\t0,0,1'
 }

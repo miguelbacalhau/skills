@@ -48,7 +48,7 @@ What there is to fix depends on the resolved reviewer:
 **The orca.nvim install check.** Per-machine (offered in machine-only mode too — the probe subcommand needs no git repository). The Neovim companion lives in its own repository, [`miguelbacalhau/orca.nvim`](https://github.com/miguelbacalhau/orca.nvim); its `:OrcaReview` opens a deliverable branch's merge-base diff in the user's own editor. This same probe gates **orca:review** — the skill that opens that review in a tmux window — so a failed prescription here is what turns orca:review into its print-only fallback (or a loud FAIL, when `editor=nvim` is pinned). Doctor prescribes; it never edits the user's nvim config. Probe with the exact check orca:review runs:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh probe nvim
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review probe nvim
 ```
 
 - `PROBE_OK: nvim` → installed and reachable. One more check before calling it healthy — the **version handshake**: orca.nvim's review comments (`:OrcaComment`) round-trip through `.orca/review-notes/<key>.json`, and plugin and skill ship separately, so either side refuses a schema version it doesn't speak. Diagnose the skew *before* a review session, not after one:
@@ -57,7 +57,7 @@ bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh probe nvim
   nvim --headless "+lua io.write(require('orca.notes').VERSION)" +qa!
   ```
 
-  Compare against the version orca speaks — `NOTES_VERSION_SPOKEN` in `${CLAUDE_PLUGIN_ROOT}/scripts/review.sh` (read it rather than reciting a remembered one). Equal → healthy, report it. The plugin's number higher → prescribe updating the orca plugin; lower (or the probe errors — a pre-comments orca.nvim has no `orca.notes` module) → prescribe updating orca.nvim via the manager's update flow or `git -C <clone> pull`. A skew doesn't break opening reviews — orca.nvim disables commenting rather than clobber a newer file, and orca:review refuses to touch a version it doesn't know — but comments won't round-trip until the older side updates.
+  Compare against the version orca speaks — `NOTES_VERSION_SPOKEN` in `${CLAUDE_PLUGIN_ROOT}/scripts/verbs/review.sh` (read it rather than reciting a remembered one). Equal → healthy, report it. The plugin's number higher → prescribe updating the orca plugin; lower (or the probe errors — a pre-comments orca.nvim has no `orca.notes` module) → prescribe updating orca.nvim via the manager's update flow or `git -C <clone> pull`. A skew doesn't break opening reviews — orca.nvim disables commenting rather than clobber a newer file, and orca:review refuses to touch a version it doesn't know — but comments won't round-trip until the older side updates.
 - `PROBE_FAILED: nvim  nvim not on PATH` → no Neovim on this machine; skip silently.
 - Any other `PROBE_FAILED` → prescribe installing `miguelbacalhau/orca.nvim` with the user's plugin manager — one lazy.nvim line as illustration (`{ "miguelbacalhau/orca.nvim" }`), no manager detection, and never write into their nvim config. For users who run no plugin manager, offer — consented like every write — a clone into Neovim's native packpath: `git clone https://github.com/miguelbacalhau/orca.nvim <stdpath('data')>/site/pack/orca/start/orca.nvim` (resolve the path by asking nvim itself: `nvim --headless "+lua io.write(vim.fn.stdpath('data'))" +q`), then `nvim --headless "+helptags <clone>/doc" +q` and re-probe. Caveat to state when the clone path is chosen: native packages require `packpath` intact — configs that reset it (plugin managers commonly do) ignore the clone silently, so if the re-probe still says `no`, the manager route is the fix.
 
@@ -70,7 +70,7 @@ Verification is in-editor: `:checkhealth orca`.
 **The orca.vscode install check.** Per-machine (offered in machine-only mode too — the probe subcommand needs no git repository). The VS Code companion lives in its own repository, [`miguelbacalhau/orca.vscode`](https://github.com/miguelbacalhau/orca.vscode); its "Orca: Review" opens a deliverable branch's merge-base diff in the user's own VS Code. This same probe gates **orca:review**'s vscode tier — a failed prescription here is what turns orca:review into its print-only fallback (or a loud FAIL, when `editor=vscode` is pinned). Doctor prescribes; it never installs. Probe with the exact check orca:review runs:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh probe vscode
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review probe vscode
 ```
 
 - `PROBE_OK: vscode` → installed; nothing to do — report it.

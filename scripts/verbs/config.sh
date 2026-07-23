@@ -4,7 +4,7 @@
 # The orca:config skill stays the conversational shell (presentation,
 # advice, failure translation); this script owns the parse, the
 # validation, the merge/removal semantics, and the canonical write.
-# the preflight verb and review.sh read the file with grep, justified by the
+# the preflight and review verbs read the file with grep, justified by the
 # guarantee that lives HERE (via lib.sh): this script is the only
 # writer, and it only ever writes the canonical shape below.
 #
@@ -65,8 +65,8 @@
 #                UNKNOWN_REVIEWER UNKNOWN_EDITOR UNKNOWN_TERMINAL
 #                WRITE_ERROR
 #
-# Canonical write shape — the contract the grep-readers in the preflight verb and
-# review.sh assume (they stay grep-only BECAUSE this script is the sole
+# Canonical write shape — the contract the grep-readers in the preflight and
+# review verbs assume (they stay grep-only BECAUSE this script is the sole
 # writer): one key=value per line, fixed order (reviewer, editor, terminal,
 # then stages in vocabulary order, model before effort), cleared keys
 # removed entirely (never "default"), and a file that would be empty is

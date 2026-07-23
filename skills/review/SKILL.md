@@ -16,7 +16,7 @@ The deterministic spine — deliverable discovery, editor/terminal resolution, p
 ## Step 1: Discover deliverables
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh discover
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review discover
 ```
 
 Exit 1 with a typed `FAIL:` (`NOT_GIT`, `NOT_BARE`) means there is nothing to review outside the bare-repo layout — say so and point at `/orca:init`. Otherwise read the `DELIVERABLE:` lines — tab-separated `branch`, `worktree`, `ok`/`missing` — and triage in the house style, offering the first match, never forcing it:
@@ -40,7 +40,7 @@ Carry the selected deliverable forward as the pair `<branch>` + `<worktree>`, ex
 ## Step 2: Open
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh open <worktree>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review open <worktree>
 ```
 
 The script resolves the `editor` and `terminal` keys from `.orca/config` (each with the same three-state contract as `reviewer` — absent → detect, nvim probed before vscode; pinned → loud fail; `none` → opt out), runs the plugin probes, and launches: a focused tmux window named `review` running `:OrcaReview` for nvim, or orca.vscode's URI handler for vscode. Every outcome first emits a `NOTES:` line — the absolute path where `:OrcaComment` notes will land for this deliverable; hold onto it. Act on the exit code:
@@ -54,7 +54,7 @@ The script resolves the `editor` and `terminal` keys from `.orca/config` (each w
 **nvim tier (`OPEN: nvim-tmux <window-id>`):** launch the waiter with `run_in_background` — never foreground; the turn must end cleanly while the user reviews:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh wait <window-id>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review wait <window-id>
 ```
 
 It polls until the window is gone, then completes — re-invoking this session with the wake signal. Then end the turn with the parting message. The user's focus just moved, so this output is what they read when they return. State, in order: the review is open in tmux window `review`; `:OrcaComment` leaves line-anchored notes; `:qa` hands them back — orca picks the comments up automatically when nvim closes; and, when satisfied, land the branch from their own worktree:
@@ -72,7 +72,7 @@ The *skill turn* still ends cleanly after launching the waiter — never wait on
 On the wake (the background `wait` task completes with `CLOSED:`), run the validated read:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/review.sh notes <worktree>
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh review notes <worktree>
 ```
 
 - **`NOTES_NONE`** → no comments: say "no comments — ready to land" and print the `git merge --no-ff <branch>` command. Done.
@@ -92,7 +92,7 @@ Only ever entered through Step 4's gate (or the identical gate offered from Step
 1. **Archive first.** Find the run directory by grepping `.orca/*/report.md` for the `` **Deliverable:** `<branch>` `` line. Found → copy the pre-addressing notes file to `<run-dir>/reviews/comments-<timestamp>.json` (timestamp via `date +%Y%m%d-%H%M%S`). No run dir — orca.nvim works in any orca-managed repo, so a notes file can exist for a branch no run produced — archive beside it as `.orca/review-notes/<key>.<timestamp>.json`.
 2. **Spawn the `orca:address` agent** (synchronous — interactive skill; waiting is fine). Its task message carries: the integration worktree path, the notes file path, the run directory when one exists (no run dir → say so: there is no spec; the comments themselves are the intent), and the per-comment plan as consented at the gate — bucket and approach per `#N`, with any corrections or answers from the conversation folded in. The agent classifies, fixes change requests, answers questions, and writes the notes file back as one whole-file snapshot with statuses and human-readable resolutions.
 3. **Commit** the fixes on the deliverable branch in the integration worktree — same attribution rules as every run commit: a subject shaped like an ordinary review-feedback commit, never mentioning Claude, AI, agents, or orca, no Co-Authored-By or Generated-with trailers. Read the message back from `git log` to check before moving on. Nothing to commit (answers only) → skip, and say so.
-4. **Verify the write-back:** re-run `review.sh notes <worktree>` — zero `open` remaining, version still 1. Anything else → report what the agent left undone rather than papering over it.
+4. **Verify the write-back:** re-run `orca.sh review notes <worktree>` — zero `open` remaining, version still 1. Anything else → report what the agent left undone rather than papering over it.
 5. **Parting message:** what was addressed vs answered (per `#N`, with each resolution), the commit hash, that re-running `/orca:review` shows each resolution inline under its anchor — editing a comment there re-opens it for the next round; that loop is the convergence mechanism — and the `git merge --no-ff <branch>` landing command for when they're satisfied.
 
 There is deliberately no machine re-review after addressing: the human re-running `:OrcaReview` and seeing resolutions at their anchors *is* the review.

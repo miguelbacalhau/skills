@@ -148,7 +148,7 @@ const badDepIds = items.flatMap(i => i.deps.filter(d => typeof d !== 'string' ||
   .map(d => `${i.id} depends on ${JSON.stringify(d)}`))
 if (badDepIds.length)
   throw new Error(`invalid work breakdown: dependency ids must match ${ITEM_ID_RE}: ${badDepIds.join('; ')}`)
-// integrationBranch — conservative git ref class (mirrors review.sh's
+// integrationBranch — conservative git ref class (mirrors the review verb's
 // notes-key character class plus '/'), rejecting the ref-syntax traps.
 //   valid:   "feature/auth", "fix/login-crash", "feature/v1.2"
 //   invalid: "-x", "a..b", "a//b", "/a", "a/", "a.lock", "a b", "a~1"
