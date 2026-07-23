@@ -43,14 +43,15 @@
 //   fixTaskId    optional id of the fix work item's session task (created by
 //                the main conversation before launch under diagnose-and-fix);
 //                threaded into the nested work loop's item for live display
-//   pluginRoot   optional absolute path of the installed plugin root (the
+//   pluginRoot   REQUIRED absolute path of the installed plugin root (the
 //                launching skill substitutes ${CLAUDE_PLUGIN_ROOT} — this
-//                script has no environment to resolve it from); when present,
-//                secrets.sh place runs after every per-hypothesis worktree
-//                add, and the nested work loop receives it verbatim for the
-//                fix item's worktrees. Absent (a resume of a pre-secrets
-//                launch) skips placement and keeps the worktree commands
-//                byte-identical to the old journal
+//                script has no environment to resolve it from). The
+//                per-hypothesis worktree ritual runs through the
+//                plugin-shipped CLI (scripts/orca.sh, which chains
+//                secrets.sh place), and the nested work loop receives the
+//                value verbatim — it refuses launch without it — so a
+//                missing plugin root refuses HERE, typed (NO_PLUGIN_ROOT),
+//                not at the Fix phase an hour in
 // }
 //
 // Return: { status: 'fixed'|'not-fixed'|'diagnosed'|'undiagnosed'|'no-repro',
@@ -109,11 +110,13 @@ if (fixTaskId !== undefined && (typeof fixTaskId !== 'string' || !fixTaskId))
 const SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 if (!SLUG_RE.test(slug))
   throw new Error(`args.slug must match ${SLUG_RE} (got ${JSON.stringify(slug)})`)
-// Secrets placement needs the plugin root to find secrets.sh; optional so a
-// resume of a launch that predates the arg still replays instead of failing.
+// The hypothesis worktree ritual runs through the plugin-shipped CLI, and
+// the nested work loop refuses to launch without a pluginRoot — mandatory,
+// refused typed here at launch rather than at the Fix phase an hour in
+// (same posture and failure type as work-loop).
 const pluginRoot = parsedArgs.pluginRoot
-if (pluginRoot !== undefined && (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/')))
-  throw new Error(`args.pluginRoot, when present, must be an absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
+if (typeof pluginRoot !== 'string' || !pluginRoot.startsWith('/'))
+  throw new Error(`NO_PLUGIN_ROOT: args.pluginRoot must be the installed plugin's absolute path (got ${JSON.stringify(pluginRoot)}) — the launching skill substitutes \${CLAUDE_PLUGIN_ROOT}`)
 
 // Per-stage model/effort overrides (args.agents). The stage vocabulary is the
 // ONE shared 12-key list — feature's stages plus debug's — kept in lockstep
@@ -256,6 +259,119 @@ const shMarked = async (cmd, label, ph) => {
 // Single-quote a value into a relayed shell command.
 const sq = s => s.replace(/'/g, `'\\''`)
 
+// ---------- relay codec: base64 + UTF-8 + frame decoder ----------
+// LOCKSTEP: a literal copy of this block lives in each workflow script
+// that calls the CLI verbs — the sandbox reads no files, so each script
+// carries its own (the MODELS/EFFORTS precedent); CI extracts and tests
+// the block under node (.github/scripts/frame-decoder-test.js). The
+// sandbox exposes NO atob/btoa/Buffer/TextDecoder/TextEncoder (verified
+// empirically 2026-07-23 with a zero-agent probe) — "standard JS
+// built-ins" means ECMAScript only, so the UTF-8 step is hand-rolled
+// here: commit messages carry non-ASCII.
+const B64_ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'
+const b64encode = s => {
+  const b = []
+  for (const ch of s) {
+    const cp = ch.codePointAt(0)
+    if (cp < 0x80) b.push(cp)
+    else if (cp < 0x800) b.push(0xc0 | (cp >> 6), 0x80 | (cp & 63))
+    else if (cp < 0x10000) b.push(0xe0 | (cp >> 12), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63))
+    else b.push(0xf0 | (cp >> 18), 0x80 | ((cp >> 12) & 63), 0x80 | ((cp >> 6) & 63), 0x80 | (cp & 63))
+  }
+  let out = ''
+  for (let i = 0; i < b.length; i += 3) {
+    const n = (b[i] << 16) | ((b[i + 1] ?? 0) << 8) | (b[i + 2] ?? 0)
+    out += B64_ALPHABET[n >> 18] + B64_ALPHABET[(n >> 12) & 63] +
+      (i + 1 < b.length ? B64_ALPHABET[(n >> 6) & 63] : '=') +
+      (i + 2 < b.length ? B64_ALPHABET[n & 63] : '=')
+  }
+  return out
+}
+const b64decode = s => {
+  const clean = s.replace(/\s+/g, '').replace(/=+$/, '')
+  if (!/^[A-Za-z0-9+/]*$/.test(clean) || clean.length % 4 === 1)
+    throw new Error('value is not base64')
+  const bytes = []
+  for (let i = 0; i < clean.length; i += 4) {
+    const chunk = clean.slice(i, i + 4)
+    let n = 0
+    for (const c of chunk) n = (n << 6) | B64_ALPHABET.indexOf(c)
+    n <<= 6 * (4 - chunk.length)
+    bytes.push((n >> 16) & 255)
+    if (chunk.length > 2) bytes.push((n >> 8) & 255)
+    if (chunk.length > 3) bytes.push(n & 255)
+  }
+  let out = ''
+  for (let i = 0; i < bytes.length;) {
+    const b0 = bytes[i++]
+    let cp, extra
+    if (b0 < 0x80) { cp = b0; extra = 0 }
+    else if ((b0 & 0xe0) === 0xc0) { cp = b0 & 31; extra = 1 }
+    else if ((b0 & 0xf0) === 0xe0) { cp = b0 & 15; extra = 2 }
+    else if ((b0 & 0xf8) === 0xf0) { cp = b0 & 7; extra = 3 }
+    else throw new Error('decoded value is not valid UTF-8')
+    for (; extra > 0; extra--) {
+      const bn = bytes[i++]
+      if (bn === undefined || (bn & 0xc0) !== 0x80) throw new Error('decoded value is not valid UTF-8')
+      cp = (cp << 6) | (bn & 63)
+    }
+    out += String.fromCodePoint(cp)
+  }
+  return out
+}
+// Frame grammar, normative alongside lib.sh's emitter: between @@ORCA@@
+// and @@ORCA_END@@, a line opening one of the frame's DECLARED keys
+// (each verb's key set is fixed) starts that key; ANY other line is a
+// continuation of the open key's value — joined, then whitespace
+// stripped from .b64 values before decoding. The continuation rule is
+// what lets a relay-wrapped multi-KB message.b64 line rejoin instead of
+// burning the one retry; matching declared keys (not a generic charset)
+// keeps a wrapped base64 continuation ending in '=' padding from
+// masquerading as a key line. A continuation before any key, or a .b64
+// value that still fails to decode after the join, throws — the loud
+// retryable frame-decode failure. Decoded .b64 keys land WITHOUT the
+// suffix (message.b64 -> message).
+const decodeFrame = (raw, keys) => {
+  const lines = raw.split('\n')
+  const a = lines.findIndex(l => l.trim() === '@@ORCA@@')
+  const b = lines.map(l => l.trim()).lastIndexOf('@@ORCA_END@@')
+  if (a === -1 || b <= a) throw new Error('frame markers missing from verb output')
+  const out = {}
+  let open = null
+  for (const line of lines.slice(a + 1, b)) {
+    const key = keys.find(k => line.startsWith(`${k}=`))
+    if (key) { open = key; out[key] = line.slice(key.length + 1) }
+    else if (open !== null) out[open] += line
+    else if (line.trim() === '') continue
+    else throw new Error(`frame continuation before any key: ${line.slice(0, 80)}`)
+  }
+  for (const k of Object.keys(out)) {
+    if (k.endsWith('.b64')) { out[k.slice(0, -4)] = b64decode(out[k]); delete out[k] }
+    else out[k] = out[k].trim()
+  }
+  return out
+}
+// ---------- end relay codec ----------
+
+// One relay call per ritual: run a CLI verb through the dispatcher and
+// decode its frame. One retry on frame-decode failure, then fail —
+// bounded, matching the lock-retry temperament. A nonzero exit (the
+// verb's typed FAIL line) is the verb's own verdict, thrown by sh() and
+// never retried here. Returns { frame, raw } — raw so callers can
+// surface the verb's pass-through lines (secrets placement).
+const verb = async (argline, keys, label, ph) => {
+  const cmd = `bash "${pluginRoot}/scripts/orca.sh" ${argline}`
+  for (let attempt = 1; ; attempt++) {
+    const raw = await sh(cmd, attempt > 1 ? `${label}~frameretry` : label, ph)
+    try { return { frame: decodeFrame(raw, keys), raw } }
+    catch (err) {
+      if (attempt === 2)
+        throw new Error(`${label}: verb frame did not decode after a retry: ${String((err && err.message) || err)}`)
+    }
+  }
+}
+const WORKTREE_KEYS = ['rc', 'arrival', 'head']
+
 // ---------- per-run lease (codex F-03; same design as work-loop) ----------
 // Atomic mkdir is the lock, owner metadata inside, refusal typed. A resume
 // replays this from the journal without re-executing (no self-deadlock); a
@@ -336,33 +452,20 @@ let fixBaseSha = null      // fix-branch tip before the first attempt — the re
 const verifyOne = async (h, hypPath) => {
   const wt = `${repoRoot}/orca-bug-${slug}-${h.id}`
   const branch = `${baseBranch}-${h.id}`
-  // Same three-arrivals pattern as work-loop: a worktree or branch left by an
-  // interrupted run is resumed, not a collision. -C the case worktree — the
-  // repo root is only a git context via its .git pointer file.
-  // Every arrival gets secrets placement (idempotent), so the repro script
-  // finds its `.env`s in the throwaway worktree at every commit it visits.
+  // One relay call for the whole ritual (same worktree-item verb as the
+  // work loop): three arrivals — a worktree or branch left by an
+  // interrupted run is resumed, not a collision — the bounded index.lock
+  // retry (up to 8 hypothesis worktrees are added concurrently off one git
+  // dir), and chained secrets placement. -C the case worktree — the repo
+  // root is only a git context via its .git pointer file.
   // Least-privilege note: unlike the work loop's review stage, every stage
   // that runs in a hypothesis worktree (reproduce, verify) executes
   // repro.sh, which needs the credentials — so placement stays.
-  const placeCmd = pluginRoot ? ` && bash "${pluginRoot}/scripts/secrets.sh" place "${wt}"` : ''
-  const wtCmd =
-    `if [ -d "${wt}" ]; then echo WORKTREE_REUSED; ` +
-    `elif git -C "${baseWt}" rev-parse -q --verify "refs/heads/${branch}" >/dev/null; then ` +
-    `git -C "${baseWt}" worktree prune && git -C "${baseWt}" worktree add "${wt}" "${branch}" && echo BRANCH_RESUMED; ` +
-    `else git -C "${baseWt}" worktree add "${wt}" -b "${branch}" "${baseBranch}"; fi${placeCmd}`
-  // Up to 8 hypothesis worktrees are added concurrently off one git dir; a
-  // sibling's ref update can hold index.lock at exactly the wrong moment.
-  // One retry before the hypothesis degrades to inconclusive.
-  let wtOut
-  try { wtOut = await sh(wtCmd, `worktree:${h.id}`, 'Verify') }
-  catch (err) {
-    const msg = String((err && err.message) || err)
-    if (!/\.lock|another git process/i.test(msg)) throw err
-    log(`${h.id}: worktree add hit a lock-shaped failure — retrying once`)
-    wtOut = await sh(wtCmd, `worktree:${h.id}~lockretry`, 'Verify')
-  }
-  if (wtOut.includes('WORKTREE_REUSED')) log(`${h.id}: resuming the worktree left by an interrupted run`)
-  for (const line of wtOut.split('\n').map(l => l.trim()))
+  const wtRes = await verb(
+    `worktree-item "${baseWt}" "${wt}" "${branch}" "${baseBranch}"`,
+    WORKTREE_KEYS, `worktree:${h.id}`, 'Verify')
+  if (wtRes.frame.arrival === 'reused') log(`${h.id}: resuming the worktree left by an interrupted run`)
+  for (const line of wtRes.raw.split('\n').map(l => l.trim()))
     if (/^(UNIGNORED|SKIPPED_EXISTS|SKIPPED_ERROR):/.test(line))
       log(`${h.id}: secrets ${line.replace(/\t/g, ' ')}`)
 
@@ -518,7 +621,7 @@ for (let round = 1; round <= 2; round++) {
       // with the diagnosis in hand — the nested loop must not double-run it.
       updateContext: false,
       ...(Object.keys(agentCfg).length ? { agents: agentCfg } : {}),
-      ...(pluginRoot ? { pluginRoot } : {}),
+      pluginRoot,
     })
   } catch (err) {
     log(`fix attempt ${round}: nested work loop failed: ${String((err && err.message) || err)}`)
