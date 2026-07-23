@@ -72,7 +72,7 @@ The delicate case: it restructures the repository in place, and **every path cha
 First the preconditions, read-only:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/init-convert.sh check
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh init-convert check
 ```
 
 One typed line per gate — `CLEAN:` (no staged or unstaged changes; untracked files are fine, they are preserved below), `NO_WORKTREES:` (only the main checkout exists), `NO_SUBMODULES:` (worktrees and submodules interact badly; a submodule repo needs a manual plan, not this recipe) — plus informational `BRANCH:` and `UNTRACKED_COUNT:` lines for the restatement. On any `FAIL` — these gates or a typed `FAIL:` like `LINKED_WORKTREE` or `BRANCH_UNSAFE` (a namespaced branch such as `feature/foo` cannot be the default worktree's name — the layout needs a single path segment) — stop and tell the user how to clear it (commit or stash, remove the worktrees, check out a single-segment branch), never work around.
@@ -80,7 +80,7 @@ One typed line per gate — `CLEAN:` (no staged or unstaged changes; untracked f
 Present the before/after layout, naming the branch and the untracked count the check reported, and get explicit confirmation. Then:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/init-convert.sh convert
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh init-convert convert
 ```
 
 The script re-verifies the gates, then converts: records the untracked manifest (`git ls-files --others -z` — ignored files included, the `.env`s and caches a fresh checkout would lose), moves `.git` to `.bare`, sets `core.bare`, writes the `gitdir:` pointer file, creates the default worktree, and moves every manifest file into it preserving relative paths. It emits `MOVED:` and a `VERIFY:` summary (tracked files clean, untracked files arrived) and stops **before** the final top-level deletion — relay both lines to the user, and stop on any `VERIFY:` that is not clean-and-arrived rather than proceeding to the deletion.
@@ -88,7 +88,7 @@ The script re-verifies the gates, then converts: records the untracked manifest 
 The deletion is its own consent, exactly as before: what remains at the top level besides `.bare`, `.git`, `<branch>`, and `.orca` is the old tracked content, which the worktree now owns. Confirm with the user once more, then:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/init-convert.sh cleanup
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh init-convert cleanup
 ```
 
 It refuses — deleting nothing — unless the worktree exists and every manifest file reconciles (`MANIFEST_MISMATCH` names the count), then removes the leftovers with one `REMOVED:` line each.

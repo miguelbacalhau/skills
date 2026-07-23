@@ -1,16 +1,16 @@
 #!/usr/bin/env bats
-# init-convert.sh — conversion, cleanup refusal, crash recovery.
+# orca.sh init-convert — conversion, cleanup refusal, crash recovery.
 
 load helpers
 
 convert_repo() { # <dir> — run convert inside it
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
 }
 
 @test "check passes on a clean conventional repo" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  run bash "$SCRIPTS/init-convert.sh" check
+  run bash "$SCRIPTS/orca.sh" init-convert check
   [ "$status" -eq 0 ]
   has_line $'CLEAN:\tPASS'
   has_line $'NO_WORKTREES:\tPASS'
@@ -22,7 +22,7 @@ convert_repo() { # <dir> — run convert inside it
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
   echo change >>seed.txt
-  run bash "$SCRIPTS/init-convert.sh" check
+  run bash "$SCRIPTS/orca.sh" init-convert check
   [ "$status" -eq 1 ]
   has_line $'CLEAN:\tFAIL'
 }
@@ -31,7 +31,7 @@ convert_repo() { # <dir> — run convert inside it
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
   git checkout -qb feature/foo
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
   assert_fail_reason BRANCH_UNSAFE
 }
 
@@ -43,7 +43,7 @@ convert_repo() { # <dir> — run convert inside it
   ln -s seed.txt link-to-seed
   mkdir -p "deep dir"
   echo c >"deep dir/nested file"
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
   [ "$status" -eq 0 ]
   has_line $'MOVED:\t4'
   has_line $'VERIFY:\ttracked-clean\tall 4 untracked arrived'
@@ -60,9 +60,9 @@ convert_repo() { # <dir> — run convert inside it
   echo t >tracked-dir/file.txt
   git add -A && git commit -qm more
   echo u >untracked.txt
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
   [ "$status" -eq 0 ]
-  run bash "$SCRIPTS/init-convert.sh" cleanup
+  run bash "$SCRIPTS/orca.sh" init-convert cleanup
   [ "$status" -eq 0 ]
   has_line 'CLEANED:'
   [ ! -e seed.txt ]
@@ -75,11 +75,11 @@ convert_repo() { # <dir> — run convert inside it
 @test "cleanup refuses unrecognized entries and registered worktrees, deleting nothing" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
   [ "$status" -eq 0 ]
   git -C main worktree add ../orca-myfeature -b orca-myfeature >/dev/null 2>&1
   echo stray >stray-file
-  run bash "$SCRIPTS/init-convert.sh" cleanup
+  run bash "$SCRIPTS/orca.sh" init-convert cleanup
   assert_fail_reason PRECONDITION
   [[ "$output" == *orca-myfeature* ]]
   [[ "$output" == *stray-file* ]]
@@ -93,10 +93,10 @@ convert_repo() { # <dir> — run convert inside it
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
   echo u >untracked.txt
-  run bash "$SCRIPTS/init-convert.sh" convert
+  run bash "$SCRIPTS/orca.sh" init-convert convert
   [ "$status" -eq 0 ]
   rm main/untracked.txt
-  run bash "$SCRIPTS/init-convert.sh" cleanup
+  run bash "$SCRIPTS/orca.sh" init-convert cleanup
   assert_fail_reason MANIFEST_MISMATCH
   [ -f seed.txt ]
 }
@@ -118,12 +118,12 @@ if [[ "\$1" == *killme* ]]; then kill -TERM \$PPID; sleep 2; exit 1; fi
 exec "$real_mv" "\$@"
 EOF
   chmod +x "$BATS_TEST_TMPDIR/fakebin/mv"
-  PATH="$BATS_TEST_TMPDIR/fakebin:$PATH" run bash "$SCRIPTS/init-convert.sh" convert
+  PATH="$BATS_TEST_TMPDIR/fakebin:$PATH" run bash "$SCRIPTS/orca.sh" init-convert convert
   assert_fail_reason INTERRUPTED
   [ -f .orca/init-convert-journal ]
   [ -f main/aaa.txt ]
   [ -f killme.txt ]
-  run bash "$SCRIPTS/init-convert.sh" recover
+  run bash "$SCRIPTS/orca.sh" init-convert recover
   [ "$status" -eq 0 ]
   has_line $'MOVED:\t2'
   has_line $'VERIFY:\ttracked-clean\tall 3 untracked arrived'
@@ -142,7 +142,7 @@ EOF
   printf 'note.txt\0' >.orca/init-convert-manifest
   printf 'begin\0main\0step\0mv-git-bare\0' >.orca/init-convert-journal
   mv .git .bare
-  run bash "$SCRIPTS/init-convert.sh" recover
+  run bash "$SCRIPTS/orca.sh" init-convert recover
   [ "$status" -eq 0 ]
   has_line $'MOVED:\t1'
   [ -f main/note.txt ]
@@ -153,6 +153,6 @@ EOF
 @test "recover without a journal fails typed" {
   make_repo "$BATS_TEST_TMPDIR/r"
   cd "$BATS_TEST_TMPDIR/r"
-  run bash "$SCRIPTS/init-convert.sh" recover
+  run bash "$SCRIPTS/orca.sh" init-convert recover
   assert_fail_reason NO_JOURNAL
 }

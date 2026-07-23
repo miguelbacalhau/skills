@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 #
 # orca init-convert — the mechanical core of orca:init's conventional-to-bare
 # conversion. The skill stays the conversational shell (the before/after
@@ -11,10 +11,10 @@
 # crashes and takes no new consent (it only completes what convert began).
 #
 # Usage:
-#   init-convert.sh check
-#   init-convert.sh convert
-#   init-convert.sh cleanup
-#   init-convert.sh recover
+#   orca.sh init-convert check
+#   orca.sh init-convert convert
+#   orca.sh init-convert cleanup
+#   orca.sh init-convert recover
 #
 # Output contract — one machine-readable line per fact, TAB-separated:
 #
@@ -67,17 +67,23 @@
 #                DETACHED_HEAD BRANCH_UNSAFE PRECONDITION CONVERT_FAILED
 #                NOT_CONVERTED NO_WORKTREE NO_MANIFEST MANIFEST_MISMATCH
 #                INTERRUPTED NO_JOURNAL OLD_GIT BAD_ARGS
+#
+# Sourced by orca.sh (orca.sh init-convert ...); the lib is loaded but
+# this verb keeps its own internal helpers, renamed init_convert_*
+# where they would collide with lib.sh's fail()/in_list() (this
+# init_convert_in_list walks an argument list, not a space-separated string). The
+# INT/TERM/HUP traps bind to the orca.sh process — exactly right: the
+# dispatcher is inert after the case, so the verb's signal story is
+# the standalone script's.
 
-set -uo pipefail
-
-fail() { # <reason> <detail> — typed failure, exit 1
+init_convert_fail() { # <reason> <detail> — typed failure, exit 1
   printf 'FAIL:\t%s\t%s\n' "$1" "$2"
   exit 1
 }
 
 # Exact-string membership over an argument list — bash 3.2 (macOS) has no
 # associative arrays.
-in_list() { # <needle> [haystack...]
+init_convert_in_list() { # <needle> [haystack...]
   local needle="$1" e
   shift
   for e in "$@"; do
@@ -119,9 +125,9 @@ move_manifest_entries() { # uses $root $branch $manifest
     dest="$root/$branch/$f"
     journal_append intent "$f"
     mkdir -p "${dest%/*}" \
-      || fail CONVERT_FAILED "mkdir failed for $f — moves incomplete; run init-convert.sh recover"
+      || init_convert_fail CONVERT_FAILED "mkdir failed for $f — moves incomplete; run init-convert.sh recover"
     mv "$root/$f" "$dest" \
-      || fail CONVERT_FAILED "move failed for $f — moves incomplete; run init-convert.sh recover"
+      || init_convert_fail CONVERT_FAILED "move failed for $f — moves incomplete; run init-convert.sh recover"
     journal_append 'done' "$f"
     moved_count=$((moved_count + 1))
   done <"$manifest"
@@ -152,34 +158,34 @@ resolve_checkout() {
   # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
   # wrong problem.
   if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+    init_convert_fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
   fi
   if [[ -z "$common_dir" ]]; then
-    fail NOT_GIT "not inside a git repository"
+    init_convert_fail NOT_GIT "not inside a git repository"
   fi
   local is_bare git_dir
   is_bare="$(git --git-dir="$common_dir" rev-parse --is-bare-repository 2>/dev/null || true)"
   if [[ "$is_bare" == "true" ]]; then
-    fail ALREADY_CONVERTED "already a bare repository — nothing to convert"
+    init_convert_fail ALREADY_CONVERTED "already a bare repository — nothing to convert"
   fi
   git_dir="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
   if [[ "$git_dir" != "$common_dir" ]]; then
-    fail LINKED_WORKTREE "this is a linked worktree — run from the main checkout"
+    init_convert_fail LINKED_WORKTREE "this is a linked worktree — run from the main checkout"
   fi
   root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
   if [[ -z "$root" || ! -d "$root/.git" || ! "$root/.git" -ef "$common_dir" ]]; then
-    fail NOT_CONVENTIONAL "the checkout root's .git is not the repository directory — a layout this recipe does not cover"
+    init_convert_fail NOT_CONVENTIONAL "the checkout root's .git is not the repository directory — a layout this recipe does not cover"
   fi
   branch="$(git -C "$root" symbolic-ref --short HEAD 2>/dev/null || true)"
   if [[ -z "$branch" ]]; then
-    fail DETACHED_HEAD "HEAD names no branch — check out the default branch first"
+    init_convert_fail DETACHED_HEAD "HEAD names no branch — check out the default branch first"
   fi
   # A namespaced branch (feature/foo) would nest the worktree under a
   # top-level directory that cleanup's keep-list does not protect — cleanup
   # would delete the worktree, moved untracked files included. Refuse before
   # any mutation; the target layout wants a single-segment default branch.
   if [[ "$branch" == */* ]]; then
-    fail BRANCH_UNSAFE "branch '$branch' contains '/' — the <repo-root>/<branch> worktree layout needs a single path segment; check out (or rename to) a single-segment default branch before converting"
+    init_convert_fail BRANCH_UNSAFE "branch '$branch' contains '/' — the <repo-root>/<branch> worktree layout needs a single path segment; check out (or rename to) a single-segment default branch before converting"
   fi
 }
 
@@ -231,18 +237,18 @@ cmd_check() {
 cmd_convert() {
   resolve_checkout
   if ! run_gates; then
-    fail PRECONDITION "a gate failed — clear it and re-run (nothing was changed)"
+    init_convert_fail PRECONDITION "a gate failed — clear it and re-run (nothing was changed)"
   fi
 
   # The manifest is captured while .git still exists, into scratch first so
   # it can never list itself.
   local tmp_manifest
-  tmp_manifest="$(mktemp)" || fail CONVERT_FAILED "mktemp failed (nothing was changed)"
+  tmp_manifest="$(mktemp)" || init_convert_fail CONVERT_FAILED "mktemp failed (nothing was changed)"
   untracked_manifest >"$tmp_manifest"
 
   if [[ -e "$root/.bare" ]]; then
     rm -f "$tmp_manifest"
-    fail CONVERT_FAILED ".bare already exists at $root — refusing (nothing was changed)"
+    init_convert_fail CONVERT_FAILED ".bare already exists at $root — refusing (nothing was changed)"
   fi
   # The worktree target must not pre-exist (an untracked file or directory
   # named like the branch): worktree add would fail mid-conversion, and the
@@ -250,7 +256,7 @@ cmd_convert() {
   # run created.
   if [[ -e "$root/$branch" ]]; then
     rm -f "$tmp_manifest"
-    fail CONVERT_FAILED "$root/$branch already exists — move it aside first (nothing was changed)"
+    init_convert_fail CONVERT_FAILED "$root/$branch already exists — move it aside first (nothing was changed)"
   fi
   # Manifest and journal both live under .orca (kept at the top level) so
   # they survive any crash from here on. Journal first: begin marks the
@@ -259,7 +265,7 @@ cmd_convert() {
   mkdir -p "$root/.orca"
   local manifest="$root/.orca/init-convert-manifest"
   mv "$tmp_manifest" "$manifest" \
-    || { rm -f "$tmp_manifest"; fail CONVERT_FAILED "could not persist the manifest (nothing was changed)"; }
+    || { rm -f "$tmp_manifest"; init_convert_fail CONVERT_FAILED "could not persist the manifest (nothing was changed)"; }
   rm -f "$(journal_path)"
   install_traps
   journal_append begin "$branch"
@@ -273,16 +279,16 @@ cmd_convert() {
   revert="reversible: cd $(printf '%q' "$root") && rm -rf ./$(printf '%q' "$branch") && rm -f .git && mv .bare .git && git config core.bare false && git worktree prune"
   journal_append step mv-git-bare
   mv "$root/.git" "$root/.bare" \
-    || { rm -f "$manifest" "$(journal_path)"; fail CONVERT_FAILED "mv .git .bare failed (nothing was changed)"; }
+    || { rm -f "$manifest" "$(journal_path)"; init_convert_fail CONVERT_FAILED "mv .git .bare failed (nothing was changed)"; }
   journal_append step core-bare
   git --git-dir="$root/.bare" config core.bare true \
-    || fail CONVERT_FAILED "core.bare write failed — $revert"
+    || init_convert_fail CONVERT_FAILED "core.bare write failed — $revert"
   journal_append step pointer-file
   printf 'gitdir: ./.bare\n' >"$root/.git" \
-    || fail CONVERT_FAILED "writing the .git pointer file failed — $revert"
+    || init_convert_fail CONVERT_FAILED "writing the .git pointer file failed — $revert"
   journal_append step worktree-add
   git -C "$root" worktree add "$root/$branch" "$branch" >/dev/null 2>&1 \
-    || fail CONVERT_FAILED "worktree add failed — $revert"
+    || init_convert_fail CONVERT_FAILED "worktree add failed — $revert"
 
   # The data-loss step, NUL-safe: every untracked file into the worktree,
   # relative paths preserved. Parent dirs via ${dest%/*}, not dirname — a
@@ -304,7 +310,7 @@ cmd_recover() {
   # trusts the journal plus the filesystem, not git. Run from the root.
   root="$(pwd -P)"
   if [[ ! -f "$(journal_path)" ]]; then
-    fail NO_JOURNAL "no .orca/init-convert-journal here — nothing to recover (run from the repository root)"
+    init_convert_fail NO_JOURNAL "no .orca/init-convert-journal here — nothing to recover (run from the repository root)"
   fi
   # branch comes from the journal's begin record — HEAD may be unreadable.
   local verb detail
@@ -313,7 +319,7 @@ cmd_recover() {
     [[ "$verb" == begin ]] && branch="$detail"
   done <"$(journal_path)"
   if [[ -z "$branch" ]]; then
-    fail CONVERT_FAILED "journal has no begin record — refusing to guess; inspect $(journal_path) by hand"
+    init_convert_fail CONVERT_FAILED "journal has no begin record — refusing to guess; inspect $(journal_path) by hand"
   fi
 
   if [[ -d "$root/.git" && ! -e "$root/.bare" ]]; then
@@ -324,26 +330,26 @@ cmd_recover() {
     exit 0
   fi
   if [[ ! -d "$root/.bare" ]]; then
-    fail CONVERT_FAILED "neither .git nor .bare is a directory at $root — inspect by hand"
+    init_convert_fail CONVERT_FAILED "neither .git nor .bare is a directory at $root — inspect by hand"
   fi
 
   install_traps
   # Roll forward, each step idempotent in journal order.
   git --git-dir="$root/.bare" config core.bare true \
-    || fail CONVERT_FAILED "core.bare write failed"
+    || init_convert_fail CONVERT_FAILED "core.bare write failed"
   if [[ ! -e "$root/.git" ]]; then
     printf 'gitdir: ./.bare\n' >"$root/.git" \
-      || fail CONVERT_FAILED "writing the .git pointer file failed"
+      || init_convert_fail CONVERT_FAILED "writing the .git pointer file failed"
   fi
   git -C "$root" worktree prune >/dev/null 2>&1
   if [[ ! -d "$root/$branch" ]]; then
     git -C "$root" worktree add "$root/$branch" "$branch" >/dev/null 2>&1 \
-      || fail CONVERT_FAILED "worktree add failed for $root/$branch"
+      || init_convert_fail CONVERT_FAILED "worktree add failed for $root/$branch"
   fi
 
   local manifest="$root/.orca/init-convert-manifest"
   if [[ ! -f "$manifest" ]]; then
-    fail NO_MANIFEST "journal exists but $manifest does not — inspect by hand"
+    init_convert_fail NO_MANIFEST "journal exists but $manifest does not — inspect by hand"
   fi
   move_manifest_entries
   printf 'MOVED:\t%s\n' "$moved_count"
@@ -358,34 +364,34 @@ cmd_cleanup() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   # Same old-git distinction as resolve_checkout.
   if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+    init_convert_fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
   fi
   if [[ -z "$common_dir" ]]; then
-    fail NOT_GIT "not inside a git repository"
+    init_convert_fail NOT_GIT "not inside a git repository"
   fi
   local is_bare
   is_bare="$(git --git-dir="$common_dir" rev-parse --is-bare-repository 2>/dev/null || true)"
   if [[ "$is_bare" != "true" || "$(basename "$common_dir")" != ".bare" ]]; then
-    fail NOT_CONVERTED "not the converted bare layout — run convert first"
+    init_convert_fail NOT_CONVERTED "not the converted bare layout — run convert first"
   fi
   root="$(dirname "$common_dir")"
   branch="$(git --git-dir="$common_dir" symbolic-ref --short HEAD 2>/dev/null || true)"
   if [[ -z "$branch" ]]; then
-    fail NOT_CONVERTED "the bare repo's HEAD names no branch"
+    init_convert_fail NOT_CONVERTED "the bare repo's HEAD names no branch"
   fi
   # The keep-list below matches top-level entry names; a namespaced branch's
   # worktree lives one level down and would be deleted with its parent.
   # convert refuses such branches, so hitting this means a hand-built layout.
   if [[ "$branch" == */* ]]; then
-    fail BRANCH_UNSAFE "branch '$branch' contains '/' — cleanup's keep-list cannot protect a nested worktree; clean up by hand"
+    init_convert_fail BRANCH_UNSAFE "branch '$branch' contains '/' — cleanup's keep-list cannot protect a nested worktree; clean up by hand"
   fi
   local wt="$root/$branch"
   if [[ ! -d "$wt" ]]; then
-    fail NO_WORKTREE "$wt does not exist — refusing to delete anything"
+    init_convert_fail NO_WORKTREE "$wt does not exist — refusing to delete anything"
   fi
   local manifest="$root/.orca/init-convert-manifest"
   if [[ ! -f "$manifest" ]]; then
-    fail NO_MANIFEST "no $manifest — convert has not run here, or cleanup already finished"
+    init_convert_fail NO_MANIFEST "no $manifest — convert has not run here, or cleanup already finished"
   fi
 
   # Reconcile before deleting: every moved file must be present in the
@@ -396,7 +402,7 @@ cmd_cleanup() {
     [[ -e "$wt/$f" || -L "$wt/$f" ]] || missing=$((missing + 1))
   done <"$manifest"
   if [[ "$missing" -gt 0 ]]; then
-    fail MANIFEST_MISMATCH "$missing of $total moved files not found in $wt — refusing to delete"
+    init_convert_fail MANIFEST_MISMATCH "$missing of $total moved files not found in $wt — refusing to delete"
   fi
 
   # Deletable means provably ours: a top-level name of tracked content at
@@ -429,19 +435,19 @@ cmd_cleanup() {
   for entry in "$root"/*; do
     name="${entry##*/}"
     case "$name" in .bare | .git | .orca | "$branch") continue ;; esac
-    if in_list "$entry" ${worktrees[@]+"${worktrees[@]}"} ||
-       ! in_list "$name" ${allowed[@]+"${allowed[@]}"}; then
+    if init_convert_in_list "$entry" ${worktrees[@]+"${worktrees[@]}"} ||
+       ! init_convert_in_list "$name" ${allowed[@]+"${allowed[@]}"}; then
       refused="${refused:+$refused, }$entry"
     fi
   done
   if [[ -n "$refused" ]]; then
     shopt -u dotglob nullglob
-    fail PRECONDITION "unrecognized top-level entries (not manifest-covered, not tracked content, or a registered worktree) — move them aside and re-run; nothing was deleted: $refused"
+    init_convert_fail PRECONDITION "unrecognized top-level entries (not manifest-covered, not tracked content, or a registered worktree) — move them aside and re-run; nothing was deleted: $refused"
   fi
   for entry in "$root"/*; do
     name="${entry##*/}"
     case "$name" in .bare | .git | .orca | "$branch") continue ;; esac
-    rm -rf "$entry" || fail CONVERT_FAILED "could not remove $entry"
+    rm -rf "$entry" || init_convert_fail CONVERT_FAILED "could not remove $entry"
     printf 'REMOVED:\t%s\n' "$entry"
     removed=$((removed + 1))
   done
@@ -456,5 +462,5 @@ case "${1:-}" in
   convert) cmd_convert ;;
   cleanup) cmd_cleanup ;;
   recover) cmd_recover ;;
-  *)       fail BAD_ARGS "usage: init-convert.sh check | convert | cleanup | recover" ;;
+  *)       init_convert_fail BAD_ARGS "usage: init-convert.sh check | convert | cleanup | recover" ;;
 esac
