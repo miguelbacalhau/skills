@@ -18,7 +18,7 @@ Two rules shape everything here. First, **the report is a claim, not ground trut
 Discovery runs through the shared triage spine:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/triage.sh discover
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh triage discover
 ```
 
 Read the `DONE:` lines — finished feature runs, oldest first, each tagged `clean`, `leftovers`, or `unknown` from its report's `## Blocked` section — plus the `RUN:` and `BRIEF:` lines for the triage below. (`FAIL: NOT_GIT` means there is nothing here to follow up; say so and stop.)

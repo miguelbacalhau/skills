@@ -1,9 +1,9 @@
 #!/usr/bin/env bats
-# triage.sh — discovery line types and the status join's slug ambiguity.
+# orca.sh triage — discovery line types and the status join's slug ambiguity.
 
 load helpers
 
-triage() { bash "$SCRIPTS/triage.sh" "$@"; }
+triage() { bash "$SCRIPTS/orca.sh" triage "$@"; }
 
 @test "discover with no .orca is silent success" {
   make_repo "$BATS_TEST_TMPDIR/r"

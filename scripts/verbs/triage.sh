@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+# shellcheck shell=bash
 #
 # orca triage — the read-only discovery spine of orca:feature's and
 # orca:debug's Step 0: what is waiting under .orca/, and the byte-exact
@@ -13,8 +13,8 @@
 # orca-* worktrees — joined to their run directories by slug.
 #
 # Usage:
-#   triage.sh discover
-#   triage.sh status
+#   orca.sh triage discover
+#   orca.sh triage status
 #
 # discover output contract — one machine-readable line per fact,
 # TAB-separated:
@@ -97,24 +97,27 @@
 # byte-identical (any drift changes agent prompts and re-runs completed
 # stages instead of replaying them from the journal), and extracting the
 # one-line JSON here keeps it out of model transcription.
+#
+# Sourced by orca.sh (orca.sh triage ...); the lib is loaded but this
+# verb keeps its own internal helpers, renamed triage_* where they
+# would collide with lib.sh's fail()/resolve_repo() (its NOT_GIT
+# detail and resolved variables differ from the lib's).
 
-set -uo pipefail
-
-fail() { # <reason> <detail> — typed failure, exit 1
+triage_fail() { # <reason> <detail> — typed failure, exit 1
   printf 'FAIL:\t%s\t%s\n' "$1" "$2"
   exit 1
 }
 
-resolve_repo() {
+triage_resolve_repo() {
   common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   # An empty result can mean old git, not no-git: --path-format needs
   # git >= 2.31, and misreporting that as NOT_GIT sends users chasing the
   # wrong problem.
   if [[ -z "$common_dir" ]] && git rev-parse --git-dir >/dev/null 2>&1; then
-    fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
+    triage_fail OLD_GIT "git $(git --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1) lacks --path-format (orca needs git >= 2.31) — upgrade git"
   fi
   if [[ -z "$common_dir" ]]; then
-    fail NOT_GIT "not inside a git repository — nothing to triage"
+    triage_fail NOT_GIT "not inside a git repository — nothing to triage"
   fi
   repo_root="$(dirname "$common_dir")"
 }
@@ -153,7 +156,7 @@ done_state() { # <report.md>
 }
 
 cmd_discover() {
-  resolve_repo
+  triage_resolve_repo
   local orca="$repo_root/.orca"
   local runid args value
 
@@ -286,7 +289,7 @@ merged_state() { # <branch> <target>
 }
 
 cmd_status() {
-  resolve_repo
+  triage_resolve_repo
   local trunk
   trunk="$(g symbolic-ref --short HEAD 2>/dev/null || true)"
   [[ -n "$trunk" ]] && printf 'TRUNK:\t%s\n' "$trunk"
@@ -349,5 +352,5 @@ cmd_status() {
 case "${1:-}" in
   discover) cmd_discover ;;
   status)   cmd_status ;;
-  *)        fail BAD_ARGS "usage: triage.sh discover|status" ;;
+  *)        triage_fail BAD_ARGS "usage: triage.sh discover|status" ;;
 esac

@@ -16,8 +16,8 @@ The cross-reference is where the value lives. A `DONE clean` run whose `feature/
 Two read-only script calls, from anywhere in the repository:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/triage.sh discover
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/triage.sh status
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh triage discover
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh triage status
 ```
 
 `discover` is the shared triage spine; unlike the other callers, read **every** line type: `RUN:` (interrupted/unlaunched, with resume-handle lines you do not need here), `DONE:` (clean/leftovers/unknown), `BRIEF:`, and `CASE:`. `status` is the git side: `TRUNK:`, then `BRANCH:`/`ITEMBR:`/`WORKTREE:` lines — each carrying merged-ness against the right target (`ahead:<n>` on integration branches counts the commits the trunk lacks) and, as its last field, the joined run directory or `orphan`. The join is computed in the script, by slug; never re-derive it conversationally.

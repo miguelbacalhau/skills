@@ -22,7 +22,7 @@ This skill is a dispatcher over `.orca` state: what is on disk decides whether t
 Discover everything waiting with one read-only script call:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/triage.sh discover
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh triage discover
 ```
 
 Each `RUN:` line is a feature run directory with no `report.md` yet, tagged `interrupted` — its workflow launched, and the `RUNID:`/`ARGS:` lines that follow carry the resume handle persisted in its `spec.md`, extracted byte-exact (plus legacy `REVIEWER:`/`AGENTS:` lines for runs recorded before the args line existed) — or `unlaunched` — it died before its workflow launched. An unlaunched dir holding only `brief.md` (no `spec.md`) died between consuming its brief and writing the spec: recover it by offering the run exactly like a queued brief, reusing the same run directory and its on-disk brief — no new run dir, no `mv`, continue from the Step 1 confirmation. An unlaunched dir WITH a `spec.md` is not resumable; leave it alone. The same call emits check 2's `BRIEF:` lines, plus `CASE:` lines that belong to orca:debug's triage and `DONE:` lines (finished runs, each tagged `clean`, `leftovers`, or `unknown`) that belong to the recovery skills — when one shows `leftovers` (or `unknown`), mention that `/orca:retry` finishes its unmet items; when `clean`, that `/orca:followup` handles any follow-ups. A mention only — they are not offering branches here; this skill dispatches on `RUN:` and `BRIEF:` lines alone. Empty output means nothing is waiting; nothing is read into context.

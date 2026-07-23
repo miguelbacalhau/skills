@@ -18,7 +18,7 @@ One boundary is principled, not arbitrary: the run's escalation agents already s
 Discovery runs through the shared triage spine:
 
 ```bash
-bash ${CLAUDE_PLUGIN_ROOT}/scripts/triage.sh discover
+bash ${CLAUDE_PLUGIN_ROOT}/scripts/orca.sh triage discover
 ```
 
 Read the `DONE:` lines — finished feature runs, oldest first, each tagged `clean`, `leftovers`, or `unknown` from its report's `## Blocked` section. (`FAIL: NOT_GIT` means there is nothing here to retry; say so and stop.)
