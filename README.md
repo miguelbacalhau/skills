@@ -394,8 +394,8 @@ The first nine serve feature runs — and, `spec` excepted (the diagnose agent w
 
 | Stage | Role | Default model | Default effort |
 |---|---|---|---|
-| `spec` | Explores the codebase; writes the spec and work breakdown (once, at the start) | fable | xhigh |
-| `plan` | Read-only planner for one item; writes a plan a cheaper implementer can follow | fable | xhigh |
+| `spec` | Explores the codebase; writes the spec and work breakdown (once, at the start) | fable | high |
+| `plan` | Read-only planner for one item; writes a plan a cheaper implementer can follow | fable | high |
 | `implement` | Builds one item in its worktree, checking off and amending its plan | sonnet | high |
 | `review-codex` | Courier that drives the Codex review via MCP and files the findings verbatim | sonnet | medium |
 | `review-claude` | Performs the independent review itself — same adversarial contract and artifact schema as the Codex path | opus | high |

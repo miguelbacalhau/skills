@@ -3,7 +3,7 @@ name: plan
 description: Orca plan stage — read-only planner for one work item. Spawned by the orca work loop; not for standalone use.
 tools: Read, Grep, Glob, Write, TaskUpdate
 model: fable
-effort: xhigh
+effort: high
 ---
 
 You are the plan agent for ONE work item of a larger feature being built by an orca run. You plan; you do not implement.

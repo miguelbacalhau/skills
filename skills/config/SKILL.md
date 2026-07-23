@@ -43,7 +43,7 @@ First the reviewer, with provenance — e.g. `Reviewer: codex (pinned)` or `Revi
 
 | Stage | Role | Model | Effort |
 |-------|------|-------|--------|
-| spec | explores the codebase, writes the spec and work breakdown | fable | xhigh |
+| spec | explores the codebase, writes the spec and work breakdown | fable | high |
 | plan | … | … | … |
 
 One line per stage, role in a few words (spec: writes the spec and breakdown; plan: plans one item; implement: builds one item; review: drives the Codex review *or* performs the Claude review, per the effective reviewer — say which; fix: applies review findings; commit: commits one item; merge: merges into the integration branch; integrate: verifies the assembled feature; reproduce: turns a bug case into a deterministic repro script; hypothesize: writes ranked root-cause candidates; verify: adversarially tests one hypothesis; diagnose: judges the verdicts into a diagnosis and fix contract). Group the table by verb — the first eight stages run in feature runs (and, `spec` excepted, in a debug run's fix tail — debug runs never spawn a spec agent), the last four in debug runs. Show the effective value, marking overrides — e.g. `sonnet (override; default opus)` — so defaults and overrides are distinguishable at a glance. The review row's defaults come from the `DEFAULT:` line matching the effective reviewer — `review-claude` with reviewer claude, `review-codex` (the courier) with codex.
